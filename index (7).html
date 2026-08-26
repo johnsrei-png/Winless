@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Winless</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Barlow+Condensed:wght@600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+<script src="config.js"></script>
+<style>
+  :root {
+    --bg:        #0b0e13;   /* stadium at night */
+    --panel:     #131820;
+    --panel-2:   #1a2029;
+    --line:      #262e3a;
+    --ink:       #eef2f7;
+    --ink-dim:   #8b97a8;
+    --ink-faint: #5a6472;
+    --alert:     #ff4d3d;   /* single alert accent — losing team red */
+    --alert-dim: #b8352a;
+    --live:      #35d07f;    /* submitted / alive */
+    --gold:      #f5c451;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: 'Inter', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    min-height: 100%;
+  }
+
+  body {
+    background-image:
+      radial-gradient(ellipse 80% 50% at 50% -10%, rgba(255,77,61,0.08), transparent 60%);
+    padding: 0 20px 80px;
+  }
+
+  .wrap { max-width: 720px; margin: 0 auto; }
+
+  /* ---- Masthead ---- */
+  header {
+    padding: 34px 0 26px;
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 28px;
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 16px;
+  }
+  .brand {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-weight: 700;
+    font-size: 44px;
+    letter-spacing: 0.14em;
+    line-height: 0.9;
+    text-transform: uppercase;
+  }
+  .brand .x { color: var(--alert); }
+  .tagline {
+    font-family: 'Barlow Semi Condensed', sans-serif;
+    font-size: 12px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin-top: 6px;
+  }
+  .whoami {
+    text-align: right;
+    font-size: 12px;
+    color: var(--ink-dim);
+    line-height: 1.5;
+  }
+  .whoami b { color: var(--ink); font-weight: 600; }
+  .whoami a {
+    color: var(--ink-faint);
+    text-decoration: none;
+    border-bottom: 1px dashed var(--ink-faint);
+    cursor: pointer;
+    font-size: 11px;
+  }
+  .whoami a:hover { color: var(--alert); border-color: var(--alert); }
+
+  /* ---- Name select ---- */
+  .gate { padding-top: 60px; text-align: center; }
+  .gate h2 {
+    font-family: 'Barlow Semi Condensed', sans-serif;
+    font-size: 15px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-dim);
+    margin-bottom: 24px;
+    font-weight: 600;
+  }
+  .name-grid {
+    display: flex;
+    gap: 14px;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+  .name-btn {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    color: var(--ink);
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 30px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 22px 40px;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: transform .12s, border-color .12s, background .12s;
+  }
+  .name-btn:hover {
+    border-color: var(--alert);
+    background: var(--panel-2);
+    transform: translateY(-2px);
+  }
+
+  /* ---- Week header ---- */
+  .weekbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 16px 20px;
+    margin-bottom: 22px;
+  }
+  .weekbar .wk {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 26px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .stat {
+    text-align: center;
+    padding: 0 4px;
+  }
+  .stat .num {
+    font-family: 'Barlow Semi Condensed', sans-serif;
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--alert);
+    line-height: 1;
+  }
+  .stat .lbl {
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin-top: 4px;
+  }
+  .weekbar .stats { display: flex; gap: 22px; }
+
+  /* ---- Submission tracker ---- */
+  .tracker {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 26px;
+  }
+  .chip {
+    flex: 1;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 12px;
+    text-align: center;
+    font-family: 'Barlow Semi Condensed', sans-serif;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .chip .nm { font-size: 16px; font-weight: 600; }
+  .chip .st { font-size: 10px; letter-spacing: 0.14em; margin-top: 3px; color: var(--ink-faint); }
+  .chip.in { border-color: var(--live); }
+  .chip.in .st { color: var(--live); }
+  .chip.wait .st { color: var(--gold); }
+
+  /* ---- Pick builder ---- */
+  .section-title {
+    font-family: 'Barlow Semi Condensed', sans-serif;
+    font-size: 13px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-dim);
+    margin: 0 0 12px 2px;
+    font-weight: 600;
+  }
+  .hint { font-size: 12px; color: var(--ink-faint); margin: 0 0 18px 2px; line-height: 1.5; }
+
+  .rank-list { display: flex; flex-direction: column; gap: 8px; }
+  .slot {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 10px 12px;
+  }
+  .slot .rk {
+    font-family: 'Barlow Semi Condensed', sans-serif;
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--ink-faint);
+    width: 34px;
+    text-align: center;
+    flex-shrink: 0;
+  }
+  .slot:first-child .rk { color: var(--alert); }
+  .slot .pts {
+    font-size: 10px;
+    color: var(--ink-faint);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    width: 44px;
+    flex-shrink: 0;
+    text-align: right;
+  }
+  select.team {
+    flex: 1;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    color: var(--ink);
+    font-family: 'Inter', sans-serif;
+    font-size: 15px;
+    font-weight: 500;
+    padding: 9px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+    -webkit-appearance: none;
+    appearance: none;
+  }
+  select.team:focus { outline: none; border-color: var(--alert); }
+  select.team.empty { color: var(--ink-faint); }
+
+  .submitbar { margin-top: 26px; display: flex; gap: 12px; align-items: center; }
+  .btn {
+    font-family: 'Barlow Semi Condensed', sans-serif;
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 15px 30px;
+    border-radius: 10px;
+    border: none;
+    cursor: pointer;
+    transition: transform .1s, background .12s;
+  }
+  .btn-primary { background: var(--alert); color: #fff; }
+  .btn-primary:hover { background: #ff6152; transform: translateY(-1px); }
+  .btn-primary:disabled { background: var(--panel-2); color: var(--ink-faint); cursor: not-allowed; transform: none; }
+  .msg { font-size: 13px; color: var(--ink-dim); }
+  .msg.ok { color: var(--live); }
+  .msg.err { color: var(--alert); }
+
+  .locked-note {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--live);
+    border-radius: 8px;
+    padding: 16px 18px;
+    font-size: 14px;
+    color: var(--ink-dim);
+    line-height: 1.55;
+  }
+  .locked-note b { color: var(--ink); }
+
+  .setup-warn {
+    background: rgba(255,77,61,0.08);
+    border: 1px solid var(--alert-dim);
+    border-radius: 10px;
+    padding: 18px 20px;
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--ink);
+    margin-top: 40px;
+  }
+  .setup-warn code { background: var(--panel-2); padding: 2px 6px; border-radius: 4px; font-size: 13px; }
+
+  .center-msg { text-align: center; color: var(--ink-dim); padding: 60px 0; font-size: 14px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <div class="brand">WINLE<span class="x">SS</span></div>
+      <div class="tagline">NFL Loser Pool — one crew, six entries</div>
+    </div>
+    <div class="whoami" id="whoami"></div>
+  </header>
+
+  <main id="app"><div class="center-msg">Loading…</div></main>
+</div>
+
+<script>
+// ============================================================
+//  Winless — steps 1 & 2: name select + pick submission
+// ============================================================
+
+const CFG = window.WINLESS_CONFIG || {};
+const SB_URL = (CFG.SUPABASE_URL || "").replace(/\/$/, "");
+const SB_KEY = CFG.SUPABASE_ANON_KEY || "";
+const CONFIGURED = SB_URL && SB_KEY && !SB_URL.includes("PASTE_") && !SB_KEY.includes("PASTE_");
+
+// NFL teams — abbrev + display
+const TEAMS = [
+  ["ARI","Arizona Cardinals"],["ATL","Atlanta Falcons"],["BAL","Baltimore Ravens"],
+  ["BUF","Buffalo Bills"],["CAR","Carolina Panthers"],["CHI","Chicago Bears"],
+  ["CIN","Cincinnati Bengals"],["CLE","Cleveland Browns"],["DAL","Dallas Cowboys"],
+  ["DEN","Denver Broncos"],["DET","Detroit Lions"],["GB","Green Bay Packers"],
+  ["HOU","Houston Texans"],["IND","Indianapolis Colts"],["JAX","Jacksonville Jaguars"],
+  ["KC","Kansas City Chiefs"],["LV","Las Vegas Raiders"],["LAC","Los Angeles Chargers"],
+  ["LAR","Los Angeles Rams"],["MIA","Miami Dolphins"],["MIN","Minnesota Vikings"],
+  ["NE","New England Patriots"],["NO","New Orleans Saints"],["NYG","New York Giants"],
+  ["NYJ","New York Jets"],["PHI","Philadelphia Eagles"],["PIT","Pittsburgh Steelers"],
+  ["SF","San Francisco 49ers"],["SEA","Seattle Seahawks"],["TB","Tampa Bay Buccaneers"],
+  ["TEN","Tennessee Titans"],["WAS","Washington Commanders"],
+];
+const TEAM_NAME = Object.fromEntries(TEAMS.map(t => [t[0], t[1]]));
+
+// ---- Supabase REST helpers ----
+async function sb(path, opts = {}) {
+  const res = await fetch(`${SB_URL}/rest/v1/${path}`, {
+    ...opts,
+    headers: {
+      apikey: SB_KEY,
+      Authorization: `Bearer ${SB_KEY}`,
+      "Content-Type": "application/json",
+      ...(opts.headers || {}),
+    },
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`${res.status}: ${body}`);
+  }
+  const txt = await res.text();
+  return txt ? JSON.parse(txt) : null;
+}
+const sbGet = (path) => sb(path, { method: "GET" });
+const sbUpsert = (table, rows, onConflict) =>
+  sb(`${table}${onConflict ? `?on_conflict=${onConflict}` : ""}`, {
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates,return=representation" },
+    body: JSON.stringify(rows),
+  });
+
+// ---- State ----
+let ME = localStorage.getItem("winless_player") || null;
+let PLAYERS = [];
+
+const app = document.getElementById("app");
+const whoami = document.getElementById("whoami");
+
+function renderWhoami() {
+  if (ME && PLAYERS.length) {
+    const p = PLAYERS.find(x => x.id === ME);
+    whoami.innerHTML = `Signed in as <b>${p ? p.name : ME}</b><br><a id="switch">switch player</a>`;
+    document.getElementById("switch").onclick = () => {
+      localStorage.removeItem("winless_player");
+      ME = null;
+      boot();
+    };
+  } else {
+    whoami.innerHTML = "";
+  }
+}
+
+// ---- Name select gate ----
+function renderGate() {
+  renderWhoami();
+  app.innerHTML = `
+    <div class="gate">
+      <h2>Who's picking?</h2>
+      <div class="name-grid">
+        ${PLAYERS.map(p => `<button class="name-btn" data-id="${p.id}">${p.name}</button>`).join("")}
+      </div>
+    </div>`;
+  app.querySelectorAll(".name-btn").forEach(btn => {
+    btn.onclick = () => {
+      ME = btn.dataset.id;
+      localStorage.setItem("winless_player", ME);
+      boot();
+    };
+  });
+}
+
+// ---- Pick submission screen ----
+async function renderWeek() {
+  renderWhoami();
+
+  // current open week = highest week_number with status 'open', else highest overall
+  const weeks = await sbGet("weeks?order=week_number.desc&limit=1");
+  if (!weeks || !weeks.length) {
+    app.innerHTML = `<div class="center-msg">No week has been opened yet.<br>
+      The commissioner needs to add a row to <b>weeks</b> to start.</div>`;
+    return;
+  }
+  const wk = weeks[0];
+  const picksReq = wk.picks_required;
+
+  // existing submission + picks for me this week
+  const [subs, myPicks] = await Promise.all([
+    sbGet(`submissions?week_number=eq.${wk.week_number}`),
+    sbGet(`picks?week_number=eq.${wk.week_number}&player_id=eq.${ME}&order=rank.asc`),
+  ]);
+
+  const submittedBy = new Set(subs.filter(s => s.submitted).map(s => s.player_id));
+  const iSubmitted = submittedBy.has(ME);
+
+  // week stat bar + tracker
+  const trackerHtml = PLAYERS.map(p => {
+    const inYet = submittedBy.has(p.id);
+    return `<div class="chip ${inYet ? "in" : "wait"}">
+        <div class="nm">${p.name}</div>
+        <div class="st">${inYet ? "✓ In" : "Waiting"}</div>
+      </div>`;
+  }).join("");
+
+  const headerHtml = `
+    <div class="weekbar">
+      <div class="wk">Week ${wk.week_number}</div>
+      <div class="stats">
+        <div class="stat"><div class="num">${wk.entries_remaining}</div><div class="lbl">Entries</div></div>
+        <div class="stat"><div class="num">${picksReq}</div><div class="lbl">Picks Each</div></div>
+      </div>
+    </div>
+    <div class="tracker">${trackerHtml}</div>`;
+
+  if (wk.status === "locked" || wk.status === "resolved") {
+    app.innerHTML = headerHtml + `
+      <div class="locked-note">
+        Week ${wk.week_number} is <b>locked</b>. Picks are in and the crew is placing entries.
+        ${iSubmitted ? "Your list is submitted." : "You didn't get a list in for this week."}
+      </div>`;
+    return;
+  }
+
+  // build the ranked slots, pre-filled if I already have picks
+  const existing = {};
+  myPicks.forEach(p => { existing[p.rank] = p.team; });
+
+  let slots = "";
+  for (let r = 1; r <= picksReq; r++) {
+    const pts = picksReq - r + 1;
+    const chosen = existing[r] || "";
+    const opts = [`<option value="" ${chosen ? "" : "selected"}>— pick a team —</option>`]
+      .concat(TEAMS.map(([ab, nm]) =>
+        `<option value="${ab}" ${chosen === ab ? "selected" : ""}>${nm}</option>`)).join("");
+    slots += `
+      <div class="slot">
+        <div class="rk">${r}</div>
+        <select class="team ${chosen ? "" : "empty"}" data-rank="${r}">${opts}</select>
+        <div class="pts">${pts} pt${pts !== 1 ? "s" : ""}</div>
+      </div>`;
+  }
+
+  app.innerHTML = headerHtml + `
+    <div class="section-title">Your ranked losers — most confident at the top</div>
+    <p class="hint">Pick ${picksReq} different teams you think will lose this week, ranked by confidence.
+      Rank 1 is worth ${picksReq} points, down to 1 point at the bottom. Your points get summed with
+      Tyler's and Kurt's to build the master ranking${iSubmitted ? " — resubmit any time before lock to change your list." : "."}</p>
+    <div class="rank-list">${slots}</div>
+    <div class="submitbar">
+      <button class="btn btn-primary" id="submit">${iSubmitted ? "Update my list" : "Submit my list"}</button>
+      <span class="msg" id="msg"></span>
+    </div>`;
+
+  // prevent picking the same team twice — live dedupe styling
+  const selects = () => Array.from(app.querySelectorAll("select.team"));
+  function refreshDupes() {
+    const chosen = selects().map(s => s.value).filter(Boolean);
+    const counts = {};
+    chosen.forEach(v => counts[v] = (counts[v] || 0) + 1);
+    selects().forEach(s => {
+      s.classList.toggle("empty", !s.value);
+      s.style.borderColor = (s.value && counts[s.value] > 1) ? "var(--alert)" : "";
+    });
+  }
+  selects().forEach(s => s.onchange = refreshDupes);
+  refreshDupes();
+
+  document.getElementById("submit").onclick = () => submitPicks(wk, picksReq);
+}
+
+async function submitPicks(wk, picksReq) {
+  const msg = document.getElementById("msg");
+  msg.className = "msg";
+  msg.textContent = "";
+
+  const selects = Array.from(app.querySelectorAll("select.team"));
+  const chosen = selects.map(s => ({ rank: +s.dataset.rank, team: s.value }));
+
+  // validate
+  const empties = chosen.filter(c => !c.team);
+  if (empties.length) {
+    msg.className = "msg err";
+    msg.textContent = `Fill all ${picksReq} slots — ${empties.length} still empty.`;
+    return;
+  }
+  const teams = chosen.map(c => c.team);
+  if (new Set(teams).size !== teams.length) {
+    msg.className = "msg err";
+    msg.textContent = "No repeats — each slot needs a different team.";
+    return;
+  }
+
+  const btn = document.getElementById("submit");
+  btn.disabled = true;
+  msg.className = "msg";
+  msg.textContent = "Saving…";
+
+  try {
+    // clear my existing picks for this week, then insert fresh
+    await sb(`picks?week_number=eq.${wk.week_number}&player_id=eq.${ME}`, { method: "DELETE" });
+    const rows = chosen.map(c => ({
+      week_number: wk.week_number, player_id: ME, team: c.team, rank: c.rank,
+    }));
+    await sb("picks", { method: "POST", body: JSON.stringify(rows) });
+    await sbUpsert("submissions",
+      [{ week_number: wk.week_number, player_id: ME, submitted: true }],
+      "week_number,player_id");
+
+    msg.className = "msg ok";
+    msg.textContent = "Locked in ✓";
+    setTimeout(renderWeek, 700);
+  } catch (e) {
+    btn.disabled = false;
+    msg.className = "msg err";
+    msg.textContent = "Save failed: " + e.message;
+  }
+}
+
+// ---- Boot ----
+async function boot() {
+  if (!CONFIGURED) {
+    whoami.innerHTML = "";
+    app.innerHTML = `
+      <div class="setup-warn">
+        <b>Almost there.</b> Open <code>config.js</code> and paste your Supabase
+        <code>SUPABASE_URL</code> and <code>SUPABASE_ANON_KEY</code>, then redeploy.
+        Until then the app can't reach the backend.
+      </div>`;
+    return;
+  }
+  try {
+    PLAYERS = await sbGet("players?order=id.asc");
+  } catch (e) {
+    app.innerHTML = `<div class="setup-warn"><b>Couldn't reach Supabase.</b><br>${e.message}
+      <br><br>Check your URL and anon key in <code>config.js</code>, and that the RLS policies ran.</div>`;
+    return;
+  }
+  if (!ME || !PLAYERS.find(p => p.id === ME)) {
+    renderGate();
+  } else {
+    app.innerHTML = `<div class="center-msg">Loading week…</div>`;
+    renderWeek();
+  }
+}
+
+boot();
+</script>
+</body>
+</html>
