@@ -83,6 +83,25 @@ async function resolveWeek(week, results) {
   return { week, changed, eliminated: [...deadEntryIds] };
 }
 
+async function gradePicks(week, results) {
+  if (!Object.keys(results).length) return { graded: 0 };
+  const picks = await sb(`picks?week_number=eq.${week}`);
+  if (!picks || !picks.length) return { graded: 0 };
+  let graded = 0;
+  for (const p of picks) {
+    const outcome = results[p.team];
+    if (!outcome) continue;
+    const newResult = outcome === "lost" ? "correct" : "incorrect";
+    if (p.result !== newResult) {
+      await sb(`picks?id=eq.${p.id}`, {
+        method: "PATCH", body: JSON.stringify({ result: newResult }),
+      });
+      graded++;
+    }
+  }
+  return { graded };
+}
+
 async function resolveField(allWeekResults) {
   const field = await sb(`field_picks`);
   if (!field || !field.length) return { fieldChanged: 0 };
@@ -118,6 +137,7 @@ exports.handler = async () => {
       const results = await fetchWeekResults(w.week_number);
       allWeekResults[w.week_number] = results;
       report.push(await resolveWeek(w.week_number, results));
+      await gradePicks(w.week_number, results);
     }
     let fieldReport = { fieldChanged: 0 };
     if (Object.keys(allWeekResults).length) fieldReport = await resolveField(allWeekResults);
