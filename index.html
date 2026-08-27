@@ -1719,7 +1719,7 @@ async function renderStandings() {
 
   // ===== Season Side Pot =====
   // fills from: (a) $2 weekly worst-record penalty, (b) pot-tile peels.
-  // won at season end by MOST WEEKLY WINS (best record that week), conf then season record as tiebreak.
+  // won at season end by MOST WEEKLY WINS (best record that week), conf then earliest submission as tiebreak.
   const WEEKLY_ANTE = 2;
 
   // per-week best & worst record among the three (uses graded picks)
@@ -1763,7 +1763,7 @@ async function renderStandings() {
   const paidBy = {}; PLAYERS.forEach(p => paidBy[p.id] = 0);
   allContribs.forEach(c => { if (paidBy[c.player_id] != null) paidBy[c.player_id] += c.amount; });
 
-  // projected winner = most weekly wins (conf/among season record as tiebreak already baked via ordering)
+  // projected winner = most weekly wins (conf/earliest-submission tiebreaks already baked into weekly best/worst)
   const winsRanked = PLAYERS.map(p => ({ id: p.id, wins: weeklyWins[p.id], seasonCorrect: tally[p.id].correct, conf: tally[p.id].conf }))
     .sort((a,b)=> b.wins-a.wins || b.seasonCorrect-a.seasonCorrect || b.conf-a.conf);
   const potLeader = winsRanked[0];
@@ -1795,7 +1795,7 @@ async function renderStandings() {
           </div>`).join("")}
       </div>
       <p class="field-note">The pot fills $${WEEKLY_ANTE} each week from whoever had the <b>worst</b> record
-        (confidence, then season record, breaks ties), plus any 🏺 pot tiles peeled. At season's end it's
+        (confidence, then latest submission, breaks ties), plus any 🏺 pot tiles peeled. At season's end it's
         <b>winner-take-all</b> to whoever won the most individual weeks.</p>
     </div>`;
 
