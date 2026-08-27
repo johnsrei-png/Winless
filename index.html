@@ -540,6 +540,41 @@
     border-radius: 5px; padding: 1px 6px; margin: 2px 3px 0 0; color: var(--ink-dim); font-size: 11px;
   }
   .board-actions { margin-top: 16px; display: flex; gap: 12px; align-items: center; }
+
+  /* ---- Clean "placed" summary (default locked view) ---- */
+  .placed-banner {
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+    background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--live);
+    border-radius: 12px; padding: 16px 20px; margin-bottom: 18px;
+  }
+  .placed-banner .txt { font-size: 13px; color: var(--ink-dim); line-height: 1.5; }
+  .placed-banner .txt b { color: var(--ink); }
+  .placed-grid { display: flex; flex-direction: column; gap: 10px; }
+  .placed-card {
+    display: flex; align-items: center; gap: 16px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    padding: 16px 20px; transition: border-color .12s;
+  }
+  .placed-card.dead { opacity: 0.5; }
+  .placed-card.survived { border-left: 3px solid var(--live); }
+  .placed-card.eliminated { border-left: 3px solid var(--alert); }
+  .placed-card .pid {
+    font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-size: 20px;
+    letter-spacing: 0.05em; text-transform: uppercase; color: var(--ink-dim);
+    width: 90px; flex-shrink: 0;
+  }
+  .placed-card .pteam {
+    flex: 1; font-family: 'Barlow Semi Condensed', sans-serif; font-weight: 700;
+    font-size: 22px; letter-spacing: 0.02em;
+  }
+  .placed-card .pteam.none { color: var(--ink-faint); font-size: 16px; font-weight: 500; font-style: italic; }
+  .placed-card .presult {
+    font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; font-weight: 600;
+    padding: 4px 10px; border-radius: 20px; flex-shrink: 0;
+  }
+  .presult.pending { background: var(--panel-2); color: var(--ink-faint); }
+  .presult.survived { background: rgba(53,208,127,0.14); color: var(--live); }
+  .presult.eliminated { background: rgba(255,77,61,0.14); color: var(--alert); }
 </style>
 </head>
 <body>
@@ -616,6 +651,7 @@ const sbUpsert = (table, rows, onConflict) =>
 // ---- State ----
 let ME = localStorage.getItem("winless_player") || null;
 let PLAYERS = [];
+let BOARD_EDIT_MODE = false;
 
 const app = document.getElementById("app");
 const whoami = document.getElementById("whoami");
@@ -812,6 +848,7 @@ async function lockWeek(wk) {
     await sb(`weeks?week_number=eq.${wk.week_number}`, {
       method: "PATCH", body: JSON.stringify({ status: "locked" }),
     });
+    BOARD_EDIT_MODE = true;   // land straight in the board to place entries
     renderWeek();
   } catch (e) {
     if (btn) { btn.disabled = false; btn.textContent = "Lock week & reveal"; }
@@ -881,6 +918,46 @@ async function renderBoard(wk, headerHtml) {
     </div>`;
 
   // team dropdown options for an entry — disable teams this entry already used
+  // ===== Two views: clean summary (default) or full edit board =====
+  if (!BOARD_EDIT_MODE) {
+    // Clean placed-summary view. Show only live entries with their assigned team + result.
+    const live = entries.filter(e => e.status !== "dead");
+    const placedCount = live.filter(e => thisWeek[e.id]).length;
+
+    const cards = entries.map(e => {
+      const dead = e.status === "dead";
+      const team = thisWeek[e.id];
+      // find this week's assignment result for status styling
+      const asg = assigns.find(a => a.week_number === wk.week_number && a.entry_id === e.id);
+      const result = asg?.result || "pending";
+      const cls = dead ? "dead" : (result === "survived" ? "survived" : result === "eliminated" ? "eliminated" : "");
+      return `
+        <div class="placed-card ${cls}">
+          <div class="pid">${e.label || "Entry " + e.id}</div>
+          <div class="pteam ${team ? "" : "none"}">${team ? (TEAM_NAME[team] || team) : "not placed"}</div>
+          ${dead
+            ? `<div class="presult eliminated">Out Wk ${e.died_week ?? "?"}</div>`
+            : `<div class="presult ${result}">${result === "pending" ? "Pending" : result === "survived" ? "Survived" : "Eliminated"}</div>`}
+        </div>`;
+    }).join("");
+
+    app.innerHTML = headerHtml + `
+      <div class="placed-banner">
+        <div class="txt"><b>Week ${wk.week_number} is set.</b> ${placedCount} of ${live.length}
+          live ${live.length === 1 ? "entry" : "entries"} placed. Results update automatically as games finish.</div>
+        <div style="display:flex;gap:8px;flex-shrink:0">
+          <button class="btn btn-ghost" id="resolvenow">Resolve now</button>
+          <button class="btn btn-lock" id="editboard">Edit board</button>
+        </div>
+      </div>
+      <div class="placed-grid">${cards}</div>`;
+
+    document.getElementById("editboard").onclick = () => { BOARD_EDIT_MODE = true; renderWeek(); };
+    document.getElementById("resolvenow").onclick = resolveNowHandler(wk);
+    return;
+  }
+
+  // ===== Full edit board (dropdowns + ranking) =====
   function teamOptions(entryId, selected) {
     const used = usedByEntry[entryId] || new Set();
     const opts = [`<option value="" ${selected ? "" : "selected"}>— assign a team —</option>`];
@@ -924,11 +1001,11 @@ async function renderBoard(wk, headerHtml) {
 
   app.innerHTML = headerHtml + `
     <div class="lockbar" style="margin-bottom:18px">
-      <div class="lbltxt"><b>Week ${wk.week_number} locked.</b> Place teams on the live entries below.
+      <div class="lbltxt"><b>Editing Week ${wk.week_number} board.</b> Place teams on the live entries.
         A team can go on more than one entry; an entry can't reuse a team it already played.</div>
       <div style="display:flex;gap:8px;flex-shrink:0">
-        <button class="btn btn-ghost" id="resolvenow">Resolve now</button>
-        <button class="btn btn-ghost" id="unlock">Unlock</button>
+        <button class="btn btn-ghost" id="unlock">Unlock picks</button>
+        <button class="btn btn-lock" id="doneedit">Done</button>
       </div>
     </div>
     <div class="reveal-grid">
@@ -947,7 +1024,25 @@ async function renderBoard(wk, headerHtml) {
     s.onchange = () => s.classList.toggle("unset", !s.value);
   });
   document.getElementById("saveboard").onclick = () => saveBoard(wk);
-  document.getElementById("resolvenow").onclick = async (e) => {
+  document.getElementById("doneedit").onclick = async () => {
+    // save current board, then drop back to clean summary
+    await saveBoard(wk);
+    BOARD_EDIT_MODE = false;
+    renderWeek();
+  };
+  document.getElementById("unlock").onclick = async () => {
+    if (!confirm("Unlock the week? This lets everyone edit their lists again.")) return;
+    BOARD_EDIT_MODE = false;
+    await sb(`weeks?week_number=eq.${wk.week_number}`, {
+      method: "PATCH", body: JSON.stringify({ status: "open" }),
+    });
+    renderWeek();
+  };
+}
+
+// Reusable "Resolve now" click handler factory
+function resolveNowHandler(wk) {
+  return async (e) => {
     const b = e.target;
     b.disabled = true; const orig = b.textContent; b.textContent = "Checking…";
     try {
@@ -962,20 +1057,13 @@ async function renderBoard(wk, headerHtml) {
       alert("Resolve failed: " + err.message);
     }
   };
-  document.getElementById("unlock").onclick = async () => {
-    if (!confirm("Unlock the week? This lets everyone edit their lists again.")) return;
-    await sb(`weeks?week_number=eq.${wk.week_number}`, {
-      method: "PATCH", body: JSON.stringify({ status: "open" }),
-    });
-    renderWeek();
-  };
 }
 
 async function saveBoard(wk) {
   const msg = document.getElementById("boardmsg");
-  msg.className = "msg"; msg.textContent = "Saving…";
   const btn = document.getElementById("saveboard");
-  btn.disabled = true;
+  if (msg) { msg.className = "msg"; msg.textContent = "Saving…"; }
+  if (btn) btn.disabled = true;
 
   const rows = Array.from(app.querySelectorAll("select.entry-team"))
     .filter(s => s.value)
@@ -990,11 +1078,11 @@ async function saveBoard(wk) {
     // clear this week's assignments, then insert the current board
     await sb(`assignments?week_number=eq.${wk.week_number}`, { method: "DELETE" });
     if (rows.length) await sb("assignments", { method: "POST", body: JSON.stringify(rows) });
-    msg.className = "msg ok"; msg.textContent = "Assignments saved ✓";
-    btn.disabled = false;
+    if (msg) { msg.className = "msg ok"; msg.textContent = "Assignments saved ✓"; }
+    if (btn) btn.disabled = false;
   } catch (e) {
-    btn.disabled = false;
-    msg.className = "msg err"; msg.textContent = "Save failed: " + e.message;
+    if (btn) btn.disabled = false;
+    if (msg) { msg.className = "msg err"; msg.textContent = "Save failed: " + e.message; }
   }
 }
 
