@@ -373,6 +373,60 @@
     font-size: 12px; color: var(--ink-faint); margin: 8px 2px 20px; line-height: 1.5;
   }
 
+  /* ---- Standings ---- */
+  .standings-table {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
+    margin-bottom: 24px;
+  }
+  .st-head, .st-row {
+    display: grid; grid-template-columns: 40px 1fr 90px 90px 80px; align-items: center;
+    gap: 10px; padding: 14px 18px;
+  }
+  .st-head {
+    border-bottom: 1px solid var(--line);
+    font-family: 'Barlow Semi Condensed', sans-serif; font-size: 11px; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--ink-faint); font-weight: 600;
+  }
+  .st-row { border-bottom: 1px solid var(--line); }
+  .st-row:last-child { border-bottom: none; }
+  .st-row.leader { background: linear-gradient(90deg, rgba(245,196,81,0.08), transparent); }
+  .st-rank {
+    font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-size: 24px;
+    color: var(--ink-faint); text-align: center;
+  }
+  .st-row.leader .st-rank { color: var(--gold); }
+  .st-name {
+    font-family: 'Barlow Semi Condensed', sans-serif; font-weight: 600; font-size: 18px;
+    letter-spacing: 0.04em;
+  }
+  .st-name small { display: block; font-family: 'Inter'; font-weight: 400; font-size: 11px; color: var(--ink-faint); letter-spacing: 0; margin-top: 1px; }
+  .st-val {
+    font-family: 'Barlow Semi Condensed', sans-serif; font-weight: 700; font-size: 20px;
+  }
+  .st-val small { font-size: 11px; color: var(--ink-faint); font-weight: 400; }
+  .st-pct { color: var(--live); }
+
+  .st-weekly { margin-top: 8px; }
+  .st-weekly h3, .st-section-title {
+    font-family: 'Barlow Semi Condensed', sans-serif; font-size: 13px; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--ink-dim); font-weight: 600; margin: 0 0 12px 2px;
+  }
+  .wk-grid {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow-x: auto;
+  }
+  .wk-grid table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  .wk-grid th, .wk-grid td {
+    padding: 9px 12px; text-align: center; border-bottom: 1px solid var(--line); white-space: nowrap;
+  }
+  .wk-grid th {
+    font-family: 'Barlow Semi Condensed', sans-serif; font-size: 11px; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--ink-faint); font-weight: 600;
+  }
+  .wk-grid td.name { text-align: left; font-weight: 600; }
+  .wk-grid td .rec { color: var(--ink); }
+  .wk-grid td .cf { color: var(--ink-faint); font-size: 11px; }
+  .wk-grid tr:last-child td { border-bottom: none; }
+
   /* ---- Lock button ---- */
   .lockbar {
     margin: 22px 0 4px;
@@ -500,6 +554,7 @@
 
   <nav id="tabs" class="tabs" style="display:none">
     <button class="tab active" data-tab="week">This Week</button>
+    <button class="tab" data-tab="standings">Standings</button>
     <button class="tab" data-tab="field">Field</button>
   </nav>
 
@@ -871,7 +926,10 @@ async function renderBoard(wk, headerHtml) {
     <div class="lockbar" style="margin-bottom:18px">
       <div class="lbltxt"><b>Week ${wk.week_number} locked.</b> Place teams on the live entries below.
         A team can go on more than one entry; an entry can't reuse a team it already played.</div>
-      <button class="btn btn-ghost" id="unlock">Unlock</button>
+      <div style="display:flex;gap:8px;flex-shrink:0">
+        <button class="btn btn-ghost" id="resolvenow">Resolve now</button>
+        <button class="btn btn-ghost" id="unlock">Unlock</button>
+      </div>
     </div>
     <div class="reveal-grid">
       <div>
@@ -889,6 +947,21 @@ async function renderBoard(wk, headerHtml) {
     s.onchange = () => s.classList.toggle("unset", !s.value);
   });
   document.getElementById("saveboard").onclick = () => saveBoard(wk);
+  document.getElementById("resolvenow").onclick = async (e) => {
+    const b = e.target;
+    b.disabled = true; const orig = b.textContent; b.textContent = "Checking…";
+    try {
+      const res = await fetch("/.netlify/functions/resolve-now");
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "failed");
+      const changed = (data.report || []).reduce((n, r) => n + (r.changed || 0), 0);
+      b.textContent = changed ? `Updated ${changed}` : "No new finals";
+      setTimeout(() => renderWeek(), 1200);
+    } catch (err) {
+      b.disabled = false; b.textContent = orig;
+      alert("Resolve failed: " + err.message);
+    }
+  };
   document.getElementById("unlock").onclick = async () => {
     if (!confirm("Unlock the week? This lets everyone edit their lists again.")) return;
     await sb(`weeks?week_number=eq.${wk.week_number}`, {
@@ -1161,6 +1234,94 @@ function renderFieldIntel(field, week) {
   document.getElementById("wksel").onchange = (e) => renderFieldIntel(field, +e.target.value);
 }
 
+// ============================================================
+//  STANDINGS TAB — how accurate each of us has been
+// ============================================================
+async function renderStandings() {
+  renderWhoami();
+
+  // all graded picks across the season
+  const picks = await sbGet(`picks?order=week_number.asc`);
+  if (!picks || !picks.length) {
+    app.innerHTML = `<div class="center-msg">No picks submitted yet this season.</div>`;
+    return;
+  }
+
+  // tally per player: record (correct/incorrect) + confidence (points on correct picks)
+  // confidence points for a pick = (picks_required that week) - rank + 1.
+  // We need each week's picks_required; fetch weeks once.
+  const weeks = await sbGet(`weeks?order=week_number.asc`) || [];
+  const reqByWeek = {}; weeks.forEach(w => reqByWeek[w.week_number] = w.picks_required);
+
+  const tally = {}; // player -> {correct, incorrect, pending, conf}
+  const weekly = {}; // player -> week -> {correct, incorrect, conf}
+  PLAYERS.forEach(p => { tally[p.id] = { correct:0, incorrect:0, pending:0, conf:0 }; weekly[p.id] = {}; });
+
+  picks.forEach(p => {
+    if (!tally[p.player_id]) return;
+    const req = reqByWeek[p.week_number] || 8;
+    const pts = req - p.rank + 1;
+    const t = tally[p.player_id];
+    const wk = (weekly[p.player_id][p.week_number] ||= { correct:0, incorrect:0, conf:0 });
+    if (p.result === "correct") { t.correct++; t.conf += pts; wk.correct++; wk.conf += pts; }
+    else if (p.result === "incorrect") { t.incorrect++; wk.incorrect++; }
+    else t.pending++;
+  });
+
+  // rank: most correct, then highest confidence (the pool's tiebreaker)
+  const ranked = PLAYERS.map(p => ({
+    id: p.id, name: p.name, ...tally[p.id],
+    total: tally[p.id].correct + tally[p.id].incorrect,
+    pct: (tally[p.id].correct + tally[p.id].incorrect)
+       ? tally[p.id].correct / (tally[p.id].correct + tally[p.id].incorrect) : 0,
+  })).sort((a,b) => b.correct - a.correct || b.conf - a.conf);
+
+  const rows = ranked.map((r, i) => `
+    <div class="st-row ${i===0 ? "leader" : ""}">
+      <div class="st-rank">${i+1}</div>
+      <div class="st-name">${r.name}${i===0 ? "<small>seeing the ball best</small>" : ""}</div>
+      <div class="st-val">${r.correct}<small>-${r.incorrect}</small></div>
+      <div class="st-val st-pct">${(r.pct*100).toFixed(0)}<small>%</small></div>
+      <div class="st-val">${r.conf}</div>
+    </div>`).join("");
+
+  // weekly breakdown grid
+  const playedWeeks = [...new Set(picks.map(p => p.week_number))].sort((a,b)=>a-b);
+  const gridHead = `<tr><th class="name">Week</th>${ranked.map(r=>`<th>${r.name}</th>`).join("")}</tr>`;
+  const gridBody = playedWeeks.map(wk => {
+    const cells = ranked.map(r => {
+      const w = weekly[r.id][wk];
+      if (!w) return `<td><span class="cf">—</span></td>`;
+      return `<td><span class="rec">${w.correct}-${w.incorrect}</span><br><span class="cf">${w.conf} cf</span></td>`;
+    }).join("");
+    return `<tr><td class="name">Week ${wk}</td>${cells}</tr>`;
+  }).join("");
+
+  const anyPending = ranked.some(r => r.pending > 0);
+
+  app.innerHTML = `
+    <div class="st-section-title">Season Standings — pick accuracy</div>
+    <div class="standings-table">
+      <div class="st-head">
+        <div style="text-align:center">#</div>
+        <div>Player</div>
+        <div>Record</div>
+        <div>Accuracy</div>
+        <div>Confidence</div>
+      </div>
+      ${rows}
+    </div>
+    <p class="field-note">Every team on your weekly list is graded: correct if it lost, incorrect if it won or tied.
+      <b>Record</b> is your season correct–incorrect. <b>Confidence</b> sums the points you assigned to teams that
+      actually lost (rank 1 on an 8-pick week = 8 points). Ranked by most correct, confidence breaks ties —
+      the "seeing the ball best" leader.${anyPending ? " Some picks are still pending this week's results." : ""}</p>
+
+    <div class="st-weekly">
+      <div class="st-section-title">Week by week</div>
+      <div class="wk-grid"><table>${gridHead}${gridBody}</table></div>
+    </div>`;
+}
+
 // ---- Boot ----
 async function boot() {
   if (!CONFIGURED) {
@@ -1203,6 +1364,7 @@ function wireTabs() {
 function routeTab() {
   app.innerHTML = `<div class="center-msg">Loading…</div>`;
   if (CURRENT_TAB === "field") renderField();
+  else if (CURRENT_TAB === "standings") renderStandings();
   else renderWeek();
 }
 
