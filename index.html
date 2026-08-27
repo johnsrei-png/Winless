@@ -286,6 +286,93 @@
 
   .center-msg { text-align: center; color: var(--ink-dim); padding: 60px 0; font-size: 14px; }
 
+  /* ---- Tabs ---- */
+  .tabs {
+    display: flex; gap: 4px; margin-bottom: 24px;
+    border-bottom: 1px solid var(--line);
+  }
+  .tab {
+    background: transparent; border: none; color: var(--ink-dim);
+    font-family: 'Barlow Semi Condensed', sans-serif; font-size: 14px; font-weight: 600;
+    letter-spacing: 0.1em; text-transform: uppercase; padding: 12px 18px;
+    cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px;
+    transition: color .12s, border-color .12s;
+  }
+  .tab:hover { color: var(--ink); }
+  .tab.active { color: var(--ink); border-bottom-color: var(--alert); }
+
+  /* ---- Field: import ---- */
+  .import-box {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    padding: 18px 20px; margin-bottom: 22px;
+  }
+  .import-box h3 {
+    font-family: 'Barlow Semi Condensed', sans-serif; font-size: 13px;
+    letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-dim);
+    font-weight: 600; margin-bottom: 8px;
+  }
+  .import-box p { font-size: 12px; color: var(--ink-faint); line-height: 1.55; margin-bottom: 12px; }
+  textarea.paste {
+    width: 100%; min-height: 120px; background: var(--panel-2); border: 1px solid var(--line);
+    border-radius: 8px; color: var(--ink); font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+    font-size: 12px; padding: 12px; resize: vertical; line-height: 1.5;
+  }
+  textarea.paste:focus { outline: none; border-color: var(--alert); }
+  .import-actions { display: flex; gap: 12px; align-items: center; margin-top: 12px; }
+
+  /* ---- Field: intel ---- */
+  .field-stats { display: flex; gap: 10px; margin-bottom: 22px; flex-wrap: wrap; }
+  .fstat {
+    flex: 1; min-width: 120px; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 14px 16px;
+  }
+  .fstat .n {
+    font-family: 'Barlow Semi Condensed', sans-serif; font-size: 26px; font-weight: 700;
+    color: var(--alert); line-height: 1;
+  }
+  .fstat .l { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-faint); margin-top: 5px; }
+
+  .field-week-sel {
+    display: flex; align-items: center; gap: 10px; margin-bottom: 16px;
+  }
+  .field-week-sel label { font-size: 12px; color: var(--ink-dim); letter-spacing: 0.08em; text-transform: uppercase; }
+  select.wksel {
+    background: var(--panel-2); border: 1px solid var(--line); color: var(--ink);
+    font-family: 'Inter', sans-serif; font-size: 14px; padding: 7px 12px; border-radius: 8px; cursor: pointer;
+  }
+
+  .heat-table {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
+  }
+  .heat-row {
+    display: flex; align-items: center; gap: 12px; padding: 10px 16px;
+    border-bottom: 1px solid var(--line);
+  }
+  .heat-row:last-child { border-bottom: none; }
+  .heat-row .team {
+    width: 130px; font-weight: 600; font-size: 14px; flex-shrink: 0;
+  }
+  .heat-row .team small { color: var(--ink-faint); font-weight: 400; display:block; font-size: 11px; }
+  .heat-bar-wrap { flex: 1; height: 22px; background: var(--panel-2); border-radius: 5px; overflow: hidden; position: relative; }
+  .heat-bar {
+    height: 100%; background: linear-gradient(90deg, var(--alert-dim), var(--alert));
+    border-radius: 5px; min-width: 2px; transition: width .5s ease;
+  }
+  .heat-row .pct {
+    width: 74px; text-align: right; font-family: 'Barlow Semi Condensed', sans-serif;
+    font-weight: 700; font-size: 15px; flex-shrink: 0;
+  }
+  .heat-row .pct small { font-size: 10px; color: var(--ink-faint); font-weight: 400; display: block; }
+  .heat-row.contrarian .team::after {
+    content: "OPEN"; display: inline-block; margin-left: 6px; font-size: 9px;
+    letter-spacing: 0.1em; color: var(--live); border: 1px solid var(--live);
+    border-radius: 4px; padding: 0 4px; vertical-align: middle;
+  }
+
+  .field-note {
+    font-size: 12px; color: var(--ink-faint); margin: 8px 2px 20px; line-height: 1.5;
+  }
+
   /* ---- Lock button ---- */
   .lockbar {
     margin: 22px 0 4px;
@@ -410,6 +497,11 @@
     </div>
     <div class="whoami" id="whoami"></div>
   </header>
+
+  <nav id="tabs" class="tabs" style="display:none">
+    <button class="tab active" data-tab="week">This Week</button>
+    <button class="tab" data-tab="field">Field</button>
+  </nav>
 
   <main id="app"><div class="center-msg">Loading…</div></main>
 </div>
@@ -833,6 +925,237 @@ async function saveBoard(wk) {
   }
 }
 
+// ============================================================
+//  FIELD TAB — import the whole pool's picks + strategic intel
+// ============================================================
+
+// Map loose team names/abbreviations -> canonical abbrev.
+const TEAM_ALIASES = (() => {
+  const m = {};
+  TEAMS.forEach(([ab, nm]) => {
+    m[ab.toUpperCase()] = ab;
+    m[nm.toUpperCase()] = ab;
+    m[nm.split(" ").pop().toUpperCase()] = ab; // last word = mascot (Cowboys, Titans)
+  });
+  // common extras / alt spellings
+  Object.assign(m, {
+    "AZ": "ARI", "ARIZONA": "ARI", "CARDINALS": "ARI",
+    "JAC": "JAX", "JAGS": "JAX", "WFT": "WAS", "COMMANDERS": "WAS", "WASHINGTON": "WAS",
+    "NINERS": "SF", "49ERS": "SF", "SF": "SF",
+    "LA": "LAR", "RAMS": "LAR", "CHARGERS": "LAC", "BOLTS": "LAC",
+    "JETS": "NYJ", "GIANTS": "NYG", "GMEN": "NYG",
+    "TAMPA": "TB", "BUCS": "TB", "BUCCANEERS": "TB",
+    "PATS": "NE", "PATRIOTS": "NE", "NINER": "SF",
+  });
+  return m;
+})();
+
+function normTeam(raw) {
+  if (!raw) return null;
+  const key = String(raw).trim().toUpperCase();
+  if (!key || key === "X") return null;
+  if (TEAM_ALIASES[key]) return TEAM_ALIASES[key];
+  // strip @ and location prefixes like "@CIN"
+  const stripped = key.replace(/[^A-Z0-9]/g, "");
+  if (TEAM_ALIASES[stripped]) return TEAM_ALIASES[stripped];
+  return null; // unrecognized -> caller can flag
+}
+
+// Parse a pasted grid: first row = header (NAME, WEEK 1, WEEK 2, ...),
+// each following row = entrant name then one team per week. Tolerant of
+// tabs or 2+ spaces or commas as delimiters, blank cells, and stray markers.
+function parseFieldPaste(text) {
+  const lines = text.split(/\r?\n/).map(l => l.replace(/\s+$/,"")).filter(l => l.trim());
+  if (!lines.length) return { rows: [], weeks: 0, unknown: [] };
+
+  const splitRow = (line) => {
+    if (line.includes("\t")) return line.split("\t");
+    if (line.includes(",")) return line.split(",");
+    return line.split(/\s{2,}/); // 2+ spaces — least reliable; tab/comma preferred
+  };
+
+  // detect delimiter for a warning if it's the unreliable space fallback
+  const usesReliableDelim = lines.some(l => l.includes("\t") || l.includes(","));
+
+  // detect + skip a header row if it starts with NAME
+  let start = 0;
+  const first = splitRow(lines[0]).map(c => c.trim().toUpperCase());
+  if (first[0] === "NAME" || first[0] === "ENTRY" || first[0].startsWith("WEEK")) start = 1;
+
+  const rows = [];
+  const unknown = new Set();
+  let maxWeeks = 0;
+
+  for (let i = start; i < lines.length; i++) {
+    const cells = splitRow(lines[i]).map(c => c.trim());
+    if (!cells.length) continue;
+    const name = cells[0].replace(/\*+$/,"").trim(); // drop trailing * markers
+    if (!name) continue;
+    const picks = [];
+    for (let w = 1; w < cells.length; w++) {
+      const t = normTeam(cells[w]);
+      if (cells[w] && cells[w].trim() && !t) unknown.add(cells[w].trim());
+      picks.push(t); // null = no pick / eliminated that week
+    }
+    maxWeeks = Math.max(maxWeeks, picks.length);
+    rows.push({ name, picks });
+  }
+  return { rows, weeks: maxWeeks, unknown: [...unknown], usesReliableDelim };
+}
+
+// Aliases (FOXY 1, FOXY 2) share an owner = name minus trailing number.
+function ownerOf(entryName) {
+  return entryName.replace(/\s+\d+$/,"").trim();
+}
+
+async function renderField() {
+  renderWhoami();
+
+  const weeks = await sbGet("weeks?order=week_number.desc&limit=1");
+  const curWeek = weeks && weeks.length ? weeks[0].week_number : 1;
+
+  // load stored field picks (one row per entry, picks as JSON)
+  let field = [];
+  try {
+    field = await sbGet("field_picks?order=entry_name.asc") || [];
+  } catch (e) {
+    app.innerHTML = fieldImportHtml("", `Couldn't load field data: ${e.message}.
+      Make sure you ran the field_picks table SQL in Supabase.`);
+    wireFieldImport(curWeek);
+    return;
+  }
+
+  if (!field.length) {
+    app.innerHTML = fieldImportHtml("", "No field picks imported yet. Paste the pool's picks grid below to light up the intel.");
+    wireFieldImport(curWeek);
+    return;
+  }
+
+  // build intel for the selected week (default = current)
+  renderFieldIntel(field, curWeek);
+}
+
+function fieldImportHtml(prefill, note) {
+  return `
+    <div class="import-box">
+      <h3>Import field picks</h3>
+      <p>${note || "Paste the whole pool's picks grid (from SimplySportsWare). First row headers, then one entry per line: name, then one team per week. Tabs, commas, or spaces all work."}</p>
+      <textarea class="paste" id="paste" placeholder="NAME\tWEEK 1\tWEEK 2\tWEEK 3
+FOXY 1\tCowboys\tBears\tBrowns
+DELWAKA 1\tBrowns\tPanthers\tJets">${prefill || ""}</textarea>
+      <div class="import-actions">
+        <button class="btn btn-primary" id="doimport">Import picks</button>
+        <span class="msg" id="importmsg"></span>
+      </div>
+    </div>`;
+}
+
+function wireFieldImport(curWeek) {
+  const btn = document.getElementById("doimport");
+  if (btn) btn.onclick = () => doFieldImport(curWeek);
+}
+
+async function doFieldImport(curWeek) {
+  const msg = document.getElementById("importmsg");
+  const text = document.getElementById("paste").value;
+  const parsed = parseFieldPaste(text);
+  if (!parsed.rows.length) {
+    msg.className = "msg err"; msg.textContent = "Couldn't find any rows — check the paste.";
+    return;
+  }
+  const btn = document.getElementById("doimport");
+  btn.disabled = true;
+  msg.className = "msg"; msg.textContent = "Importing…";
+
+  // upsert one row per entry: { entry_name, owner, picks(json) }
+  const rows = parsed.rows.map(r => ({
+    entry_name: r.name,
+    owner: ownerOf(r.name),
+    picks: JSON.stringify(r.picks),
+  }));
+
+  try {
+    // replace the whole field snapshot
+    await sb("field_picks?entry_name=neq.__none__", { method: "DELETE" });
+    await sb("field_picks", { method: "POST", body: JSON.stringify(rows) });
+    let note = `Imported ${parsed.rows.length} entries across ${parsed.weeks} week${parsed.weeks!==1?"s":""}.`;
+    if (!parsed.usesReliableDelim) note += ` Heads up: no tabs/commas detected — used space-splitting, which can misread names with spaces. If picks look wrong, paste from the site's copy (usually tab-separated) or use a CSV.`;
+    if (parsed.unknown.length) note += ` Unrecognized: ${parsed.unknown.slice(0,8).join(", ")}${parsed.unknown.length>8?"…":""} (skipped).`;
+    msg.className = "msg ok"; msg.textContent = note;
+    setTimeout(() => renderField(), 900);
+  } catch (e) {
+    btn.disabled = false;
+    msg.className = "msg err"; msg.textContent = "Import failed: " + e.message;
+  }
+}
+
+function renderFieldIntel(field, week) {
+  // hydrate picks
+  const entries = field.map(f => ({
+    name: f.entry_name, owner: f.owner,
+    picks: (() => { try { return JSON.parse(f.picks); } catch { return []; } })(),
+  }));
+
+  const maxWeeks = Math.max(1, ...entries.map(e => e.picks.length));
+  const wIdx = week - 1;
+
+  // who's still alive = has a pick in the selected week (rough proxy; refined once results wire in)
+  const aliveThisWeek = entries.filter(e => e.picks[wIdx]);
+  const totalAlive = aliveThisWeek.length;
+
+  // % on each team this week
+  const counts = {};
+  aliveThisWeek.forEach(e => {
+    const t = e.picks[wIdx];
+    if (t) counts[t] = (counts[t] || 0) + 1;
+  });
+  const heat = Object.entries(counts)
+    .map(([team, n]) => ({ team, n, pct: totalAlive ? n / totalAlive : 0 }))
+    .sort((a, b) => b.n - a.n);
+
+  // owners & total entries
+  const owners = new Set(entries.map(e => e.owner));
+
+  const stats = `
+    <div class="field-stats">
+      <div class="fstat"><div class="n">${entries.length}</div><div class="l">Total Entries</div></div>
+      <div class="fstat"><div class="n">${owners.size}</div><div class="l">Entrants</div></div>
+      <div class="fstat"><div class="n">${totalAlive}</div><div class="l">Picked Wk ${week}</div></div>
+      <div class="fstat"><div class="n">${heat.length}</div><div class="l">Teams In Play</div></div>
+    </div>`;
+
+  const wkOptions = [];
+  for (let w = 1; w <= maxWeeks; w++)
+    wkOptions.push(`<option value="${w}" ${w === week ? "selected" : ""}>Week ${w}</option>`);
+
+  const heatRows = heat.map(h => {
+    const pctTxt = (h.pct * 100).toFixed(1);
+    const contrarian = h.pct > 0 && h.pct <= 0.05; // <=5% of field = contrarian opening
+    return `
+      <div class="heat-row ${contrarian ? "contrarian" : ""}">
+        <div class="team">${TEAM_NAME[h.team] || h.team}<small>${h.n} ${h.n === 1 ? "entry" : "entries"}</small></div>
+        <div class="heat-bar-wrap"><div class="heat-bar" style="width:${Math.max(2, h.pct*100)}%"></div></div>
+        <div class="pct">${pctTxt}%<small>of field</small></div>
+      </div>`;
+  }).join("");
+
+  app.innerHTML = `
+    ${fieldImportHtml("", null)}
+    ${stats}
+    <div class="field-week-sel">
+      <label>Show week</label>
+      <select class="wksel" id="wksel">${wkOptions.join("")}</select>
+    </div>
+    <div class="section-title">Field concentration — who's on what</div>
+    <p class="field-note">How much of the surviving field is riding each team this week. High % = chalk
+      (safe but crowded); <span style="color:var(--live)">OPEN</span> flags teams almost nobody's using —
+      contrarian survival if you believe in them.</p>
+    <div class="heat-table">${heatRows || '<div class="heat-row"><div class="team" style="color:var(--ink-faint)">No picks for this week yet.</div></div>'}</div>`;
+
+  wireFieldImport(week);
+  document.getElementById("wksel").onchange = (e) => renderFieldIntel(field, +e.target.value);
+}
+
 // ---- Boot ----
 async function boot() {
   if (!CONFIGURED) {
@@ -853,11 +1176,29 @@ async function boot() {
     return;
   }
   if (!ME || !PLAYERS.find(p => p.id === ME)) {
+    document.getElementById("tabs").style.display = "none";
     renderGate();
   } else {
-    app.innerHTML = `<div class="center-msg">Loading week…</div>`;
-    renderWeek();
+    document.getElementById("tabs").style.display = "flex";
+    wireTabs();
+    routeTab();
   }
+}
+
+let CURRENT_TAB = "week";
+function wireTabs() {
+  document.querySelectorAll(".tab").forEach(t => {
+    t.onclick = () => {
+      CURRENT_TAB = t.dataset.tab;
+      document.querySelectorAll(".tab").forEach(x => x.classList.toggle("active", x === t));
+      routeTab();
+    };
+  });
+}
+function routeTab() {
+  app.innerHTML = `<div class="center-msg">Loading…</div>`;
+  if (CURRENT_TAB === "field") renderField();
+  else renderWeek();
 }
 
 boot();
