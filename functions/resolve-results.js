@@ -156,7 +156,8 @@ exports.handler = async () => {
   }
   try {
     // Resolve any week that is locked or resolved (not still open for picks).
-    const weeks = await sb(`weeks?status=in.(locked,resolved)&order=week_number.asc`);
+    const allWeeks = await sb(`weeks?order=week_number.asc`);
+    const weeks = (allWeeks || []).filter(w => w.status === "locked" || w.status === "resolved");
     const report = [];
     const allWeekResults = {};
     for (const w of weeks || []) {
