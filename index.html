@@ -1445,11 +1445,22 @@ async function renderStandings() {
 }
 
 // ============================================================
-//  COMMISSIONER — password-gated tools (season reset)
+//  COMMISSIONER — Reid is commish by default; password is a fallback
 // ============================================================
 const COMMISH_PASSWORD = "gopackgo";
+const COMMISH_PLAYER = "reid";   // this player gets commish tools without a password
 
 function openCommish() {
+  // Reid goes straight in; anyone else must enter the password.
+  if (ME === COMMISH_PLAYER) {
+    const overlay = document.createElement("div");
+    overlay.className = "modal-overlay";
+    overlay.innerHTML = `<div class="modal"></div>`;
+    document.body.appendChild(overlay);
+    overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+    commishTools(overlay);
+    return;
+  }
   const overlay = document.createElement("div");
   overlay.className = "modal-overlay";
   overlay.innerHTML = `
@@ -1481,16 +1492,65 @@ function openCommish() {
   pw.onkeydown = (e) => { if (e.key === "Enter") tryEnter(); };
 }
 
-function commishTools(overlay) {
-  overlay.querySelector(".modal").innerHTML = `
+async function commishTools(overlay) {
+  const modal = overlay.querySelector(".modal");
+  modal.innerHTML = `<h2>Commissioner</h2><p>Loading season state…</p>`;
+
+  // figure out sensible defaults for the next week
+  let weeks = [], entries = [];
+  try {
+    [weeks, entries] = await Promise.all([
+      sbGet("weeks?order=week_number.desc"),
+      sbGet("entries?order=id.asc"),
+    ]);
+  } catch (e) {
+    modal.innerHTML = `<h2>Commissioner</h2><p class="msg err">Couldn't load state: ${e.message}</p>
+      <div class="modal-actions"><button class="btn btn-ghost" id="c">Close</button></div>`;
+    modal.querySelector("#c").onclick = () => overlay.remove();
+    return;
+  }
+
+  const latest = weeks && weeks.length ? weeks[0] : null;
+  const nextWeekNum = latest ? latest.week_number + 1 : 1;
+  const aliveCount = (entries || []).filter(e => e.status !== "dead").length || 6;
+  const defaultPicks = aliveCount + 2;
+
+  const currentStatusLine = latest
+    ? `Latest week: <b>Week ${latest.week_number}</b> (${latest.status}).`
+    : `No weeks yet — this will be Week 1.`;
+
+  modal.innerHTML = `
     <h2>Commissioner</h2>
-    <p>Season tools. Handle with care.</p>
+    <p>${currentStatusLine} ${aliveCount} entries still alive.</p>
+
+    <div class="modal-section">
+      <h3>Open a week</h3>
+      <p>Opens picks for a new week. Picks required defaults to alive entries + 2.
+        Everyone can then submit until it's locked.</p>
+      <div style="display:flex;gap:10px">
+        <div style="flex:1">
+          <label style="font-size:11px;color:var(--ink-faint);letter-spacing:0.08em;text-transform:uppercase">Week #</label>
+          <input type="number" id="wknum" value="${nextWeekNum}" min="1" />
+        </div>
+        <div style="flex:1">
+          <label style="font-size:11px;color:var(--ink-faint);letter-spacing:0.08em;text-transform:uppercase">Entries left</label>
+          <input type="number" id="wkentries" value="${aliveCount}" min="1" max="6" />
+        </div>
+        <div style="flex:1">
+          <label style="font-size:11px;color:var(--ink-faint);letter-spacing:0.08em;text-transform:uppercase">Picks each</label>
+          <input type="number" id="wkpicks" value="${defaultPicks}" min="1" />
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-primary" id="openweek">Open Week ${nextWeekNum}</button>
+      </div>
+      <span class="msg" id="openmsg"></span>
+    </div>
 
     <div class="modal-section">
       <h3>Reset season</h3>
       <p>Wipes all picks, submissions, assignments, field imports, results, and weeks.
-        Your players and the six entries stay (entries are set back to alive). Use this to
-        clear test data or start a new season. <b>This can't be undone.</b></p>
+        Players and the six entries stay (entries reset to alive). <b>Can't be undone.</b></p>
       <div class="modal-actions">
         <button class="btn btn-ghost" id="closetools">Close</button>
         <button class="btn btn-danger" id="resetseason">Reset season</button>
@@ -1498,20 +1558,59 @@ function commishTools(overlay) {
       <span class="msg" id="resetmsg"></span>
     </div>`;
 
-  overlay.querySelector("#closetools").onclick = () => overlay.remove();
-  overlay.querySelector("#resetseason").onclick = async () => {
+  // auto-sync picks default when entries changes
+  const entriesInput = modal.querySelector("#wkentries");
+  const picksInput = modal.querySelector("#wkpicks");
+  entriesInput.oninput = () => {
+    const v = parseInt(entriesInput.value, 10);
+    if (!isNaN(v)) picksInput.value = v + 2;
+  };
+
+  modal.querySelector("#openweek").onclick = async () => {
+    const msg = modal.querySelector("#openmsg");
+    const wknum = parseInt(modal.querySelector("#wknum").value, 10);
+    const wkentries = parseInt(entriesInput.value, 10);
+    const wkpicks = parseInt(picksInput.value, 10);
+    if (!wknum || !wkentries || !wkpicks) {
+      msg.className = "msg err"; msg.textContent = "Fill all three fields."; return;
+    }
+    const btn = modal.querySelector("#openweek");
+    btn.disabled = true; msg.className = "msg"; msg.textContent = "Opening…";
+    try {
+      // if this week number already exists, update it; else insert
+      const existing = weeks.find(w => w.week_number === wknum);
+      if (existing) {
+        await sb(`weeks?week_number=eq.${wknum}`, {
+          method: "PATCH",
+          body: JSON.stringify({ entries_remaining: wkentries, picks_required: wkpicks, status: "open" }),
+        });
+      } else {
+        await sb("weeks", {
+          method: "POST",
+          body: JSON.stringify({ week_number: wknum, entries_remaining: wkentries, picks_required: wkpicks, status: "open" }),
+        });
+      }
+      msg.className = "msg ok"; msg.textContent = `Week ${wknum} is open. Reloading…`;
+      BOARD_EDIT_MODE = false; CURRENT_TAB = "week";
+      setTimeout(() => { overlay.remove(); boot(); }, 900);
+    } catch (e) {
+      btn.disabled = false;
+      msg.className = "msg err"; msg.textContent = "Failed: " + e.message;
+    }
+  };
+
+  modal.querySelector("#closetools").onclick = () => overlay.remove();
+  modal.querySelector("#resetseason").onclick = async () => {
     if (!confirm("Really wipe the whole season? Picks, weeks, assignments, field data, and results will be deleted. This cannot be undone.")) return;
-    const btn = overlay.querySelector("#resetseason");
-    const msg = overlay.querySelector("#resetmsg");
+    const btn = modal.querySelector("#resetseason");
+    const msg = modal.querySelector("#resetmsg");
     btn.disabled = true; msg.className = "msg"; msg.textContent = "Resetting…";
     try {
-      // delete gameplay data (filters match everything; PostgREST needs a filter to delete)
       await sb(`assignments?id=gte.0`, { method: "DELETE" });
       await sb(`picks?id=gte.0`, { method: "DELETE" });
       await sb(`submissions?week_number=gte.0`, { method: "DELETE" });
       await sb(`field_picks?id=gte.0`, { method: "DELETE" });
       await sb(`weeks?id=gte.0`, { method: "DELETE" });
-      // revive entries
       await sb(`entries?id=gte.0`, {
         method: "PATCH", body: JSON.stringify({ status: "alive", died_week: null }),
       });
