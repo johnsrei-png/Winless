@@ -1093,14 +1093,16 @@ function renderFieldIntel(field, week) {
   // hydrate picks
   const entries = field.map(f => ({
     name: f.entry_name, owner: f.owner,
+    outWeek: f.out_week ?? null,
     picks: (() => { try { return JSON.parse(f.picks); } catch { return []; } })(),
   }));
 
   const maxWeeks = Math.max(1, ...entries.map(e => e.picks.length));
   const wIdx = week - 1;
 
-  // who's still alive = has a pick in the selected week (rough proxy; refined once results wire in)
-  const aliveThisWeek = entries.filter(e => e.picks[wIdx]);
+  // alive this week = not eliminated before this week AND has a pick this week
+  const aliveThisWeek = entries.filter(e =>
+    (e.outWeek == null || e.outWeek >= week) && e.picks[wIdx]);
   const totalAlive = aliveThisWeek.length;
 
   // % on each team this week
@@ -1113,14 +1115,17 @@ function renderFieldIntel(field, week) {
     .map(([team, n]) => ({ team, n, pct: totalAlive ? n / totalAlive : 0 }))
     .sort((a, b) => b.n - a.n);
 
-  // owners & total entries
+  // owners & total entries; still-alive across the whole field (not week-specific)
   const owners = new Set(entries.map(e => e.owner));
+  const stillAlive = entries.filter(e => e.outWeek == null).length;
+  const anyResolved = entries.some(e => e.outWeek != null);
 
   const stats = `
     <div class="field-stats">
       <div class="fstat"><div class="n">${entries.length}</div><div class="l">Total Entries</div></div>
       <div class="fstat"><div class="n">${owners.size}</div><div class="l">Entrants</div></div>
-      <div class="fstat"><div class="n">${totalAlive}</div><div class="l">Picked Wk ${week}</div></div>
+      ${anyResolved ? `<div class="fstat"><div class="n">${stillAlive}</div><div class="l">Still Alive</div></div>` : ""}
+      <div class="fstat"><div class="n">${totalAlive}</div><div class="l">On A Team Wk ${week}</div></div>
       <div class="fstat"><div class="n">${heat.length}</div><div class="l">Teams In Play</div></div>
     </div>`;
 
