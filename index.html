@@ -1599,12 +1599,8 @@ function renderFieldIntel(field, week) {
 async function renderStandings() {
   renderWhoami();
 
-  // all graded picks across the season
-  const picks = await sbGet(`picks?order=week_number.asc`);
-  if (!picks || !picks.length) {
-    app.innerHTML = `<div class="center-msg">No picks submitted yet this season.</div>`;
-    return;
-  }
+  // all graded picks across the season (empty is fine — everything computes to zeros)
+  const picks = (await sbGet(`picks?order=week_number.asc`)) || [];
 
   // tally per player: record (correct/incorrect) + confidence (points on correct picks)
   // confidence points for a pick = (picks_required that week) - rank + 1.
@@ -1761,7 +1757,7 @@ async function renderStandings() {
   const potLeader = winsRanked[0];
   const potTied = winsRanked.filter(w => w.wins === potLeader.wins && potLeader.wins > 0);
 
-  const potHtml = (potTotal > 0 || gradedWeekNums.length) ? `
+  const potHtml = `
     <div class="st-weekly">
       <div class="st-section-title">Season Side Pot</div>
       <div class="pot-hero">
@@ -1773,7 +1769,7 @@ async function renderStandings() {
           ? (potTied.length > 1
               ? `Tied lead: ${potTied.map(t=>nameOf(t.id)).join(" & ")} — ${potLeader.wins} weekly win${potLeader.wins!==1?"s":""} each`
               : `Projected winner: <b>${nameOf(potLeader.id)}</b> — ${potLeader.wins} weekly win${potLeader.wins!==1?"s":""}`)
-          : "No weeks decided yet."}
+          : "No weeks decided yet — pot starts building once picks are graded."}
       </div>
       <div class="standings-table" style="margin-top:14px">
         <div class="st-head" style="grid-template-columns:1fr 90px 110px">
@@ -1789,7 +1785,7 @@ async function renderStandings() {
       <p class="field-note">The pot fills $${WEEKLY_ANTE} each week from whoever had the <b>worst</b> record
         (confidence, then season record, breaks ties), plus any 🏺 pot tiles peeled. At season's end it's
         <b>winner-take-all</b> to whoever won the most individual weeks.</p>
-    </div>` : "";
+    </div>`;
 
   const ledgerHtml = anyMoney ? `
     <div class="st-weekly">
@@ -1831,7 +1827,7 @@ async function renderStandings() {
     <p class="field-note">Every team on your weekly list is graded: correct if it lost, incorrect if it won or tied.
       <b>Record</b> is your season correct–incorrect. <b>Confidence</b> sums the points you assigned to teams that
       actually lost (rank 1 on an 8-pick week = 8 points). Ranked by most correct, confidence breaks ties —
-      the "seeing the ball best" leader.${anyPending ? " Some picks are still pending this week's results." : ""}</p>
+      the "seeing the ball best" leader.${picks.length === 0 ? " Nothing graded yet — records fill in once results come in." : (anyPending ? " Some picks are still pending this week's results." : "")}</p>
 
     <div class="st-weekly">
       <div class="st-section-title">Week by week</div>
