@@ -559,10 +559,25 @@
   .placed-card.survived { border-left: 3px solid var(--live); }
   .placed-card.eliminated { border-left: 3px solid var(--alert); }
   .placed-card .pid {
-    font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-size: 20px;
-    letter-spacing: 0.05em; text-transform: uppercase; color: var(--ink-dim);
-    width: 90px; flex-shrink: 0;
+    width: 160px; flex-shrink: 0;
   }
+  .placed-card .pid-name {
+    font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-size: 20px;
+    letter-spacing: 0.03em; color: var(--ink); cursor: text; display: inline-block;
+    border-bottom: 1px dashed transparent; line-height: 1.1;
+  }
+  .placed-card .pid-name:hover { border-bottom-color: var(--ink-faint); }
+  .placed-card .pid-sub {
+    display: block; font-family: 'Barlow Semi Condensed', sans-serif; font-weight: 600;
+    font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-faint);
+    margin-top: 2px;
+  }
+  input.pid-edit {
+    font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-size: 20px;
+    background: var(--panel-2); border: 1px solid var(--alert); border-radius: 6px;
+    color: var(--ink); padding: 2px 8px; width: 155px; letter-spacing: 0.03em;
+  }
+  input.pid-edit:focus { outline: none; }
   .placed-card .pteam {
     flex: 1; font-family: 'Barlow Semi Condensed', sans-serif; font-weight: 700;
     font-size: 22px; letter-spacing: 0.02em;
@@ -1053,7 +1068,10 @@ async function renderBoard(wk, headerHtml) {
       const cls = dead ? "dead" : (result === "survived" ? "survived" : result === "eliminated" ? "eliminated" : "");
       return `
         <div class="placed-card ${cls}">
-          <div class="pid">${e.label || "Entry " + e.id}</div>
+          <div class="pid">
+            <span class="pid-name" data-entry="${e.id}" title="Click to rename">${e.label || "Entry " + e.id}</span>
+            <span class="pid-sub">Entry ${e.id}</span>
+          </div>
           <div class="pteam ${team ? "" : "none"}">${team ? (TEAM_NAME[team] || team) : "not placed"}</div>
           ${dead
             ? `<div class="presult eliminated">Out Wk ${e.died_week ?? "?"}</div>`
@@ -1074,6 +1092,7 @@ async function renderBoard(wk, headerHtml) {
 
     document.getElementById("editboard").onclick = () => { BOARD_EDIT_MODE = true; renderWeek(); };
     document.getElementById("resolvenow").onclick = resolveNowHandler(wk);
+    wireEntryRename();
     return;
   }
 
@@ -1818,6 +1837,59 @@ async function commishTools(overlay) {
       msg.className = "msg err"; msg.textContent = "Reset failed: " + e.message;
     }
   };
+}
+
+// Inline rename of entries on the placed view. Saves to entries.label for everyone.
+function wireEntryRename() {
+  app.querySelectorAll(".pid-name").forEach(span => {
+    span.onclick = () => {
+      if (span.querySelector("input")) return; // already editing
+      const entryId = span.dataset.entry;
+      const current = span.textContent.trim();
+      const startsAsDefault = /^Entry \d+$/.test(current);
+      const input = document.createElement("input");
+      input.type = "text";
+      input.value = startsAsDefault ? "" : current;
+      input.placeholder = "Name this entry…";
+      input.maxLength = 40;
+      input.className = "pid-edit";
+      span.textContent = "";
+      span.appendChild(input);
+      input.focus(); input.select();
+
+      let done = false;
+      const finish = async (save) => {
+        if (done) return; done = true;
+        const val = input.value.trim();
+        if (save && val && val !== current) {
+          try {
+            await sb(`entries?id=eq.${entryId}`, {
+              method: "PATCH", body: JSON.stringify({ label: val }),
+            });
+            span.textContent = val;
+          } catch (e) {
+            span.textContent = current;
+            alert("Rename failed: " + e.message);
+          }
+        } else if (save && !val) {
+          // empty = clear back to default
+          try {
+            await sb(`entries?id=eq.${entryId}`, {
+              method: "PATCH", body: JSON.stringify({ label: null }),
+            });
+            span.textContent = "Entry " + entryId;
+          } catch (e) { span.textContent = current; }
+        } else {
+          span.textContent = current;
+        }
+      };
+      input.onblur = () => finish(true);
+      input.onkeydown = (e) => {
+        if (e.key === "Enter") { e.preventDefault(); input.blur(); }
+        else if (e.key === "Escape") { done = true; span.textContent = current; }
+      };
+    };
+  });
 }
 
 // ---- Boot ----
