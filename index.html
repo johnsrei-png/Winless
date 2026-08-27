@@ -1093,9 +1093,13 @@ async function submitPicks(wk, picksReq) {
       week_number: wk.week_number, player_id: ME, team: c.team, rank: c.rank,
     }));
     await sb("picks", { method: "POST", body: JSON.stringify(rows) });
-    await sbUpsert("submissions",
-      [{ week_number: wk.week_number, player_id: ME, submitted: true }],
-      "week_number,player_id");
+
+    // record submission; stamp first_submitted_at ONLY the first time (never overwrite)
+    const existing = await sbGet(`submissions?week_number=eq.${wk.week_number}&player_id=eq.${ME}`);
+    const alreadyHasFirst = existing && existing.length && existing[0].first_submitted_at;
+    const subRow = { week_number: wk.week_number, player_id: ME, submitted: true };
+    if (!alreadyHasFirst) subRow.first_submitted_at = new Date().toISOString();
+    await sbUpsert("submissions", [subRow], "week_number,player_id");
 
     msg.className = "msg ok";
     msg.textContent = "Locked in ✓";
@@ -1607,6 +1611,12 @@ async function renderStandings() {
   // We need each week's picks_required; fetch weeks once.
   const weeks = await sbGet(`weeks?order=week_number.asc`) || [];
   const reqByWeek = {}; weeks.forEach(w => reqByWeek[w.week_number] = w.picks_required);
+  const subsForTie = await sbGet(`submissions?order=week_number.asc`).catch(() => []);
+  const firstSubByWeek = {};
+  (subsForTie || []).forEach(s => {
+    if (!s.first_submitted_at) return;
+    (firstSubByWeek[s.week_number] ||= {})[s.player_id] = s.first_submitted_at;
+  });
 
   const tally = {}; // player -> {correct, incorrect, pending, conf}
   const weekly = {}; // player -> week -> {correct, incorrect, conf}
@@ -1725,16 +1735,18 @@ async function renderStandings() {
     });
     return s;
   }
+  const subTimeFor = (wk, id) => (firstSubByWeek[wk]?.[id]) || "9999";
 
   // weekly wins per player + pot contributions from worst record
   const weeklyWins = {}; PLAYERS.forEach(p => weeklyWins[p.id] = 0);
   const potFromPenalty = [];   // {player_id, amount, week}
   gradedWeekNums.forEach(wk => {
     const s = weekRecords(wk);
-    const order = PLAYERS.map(p => ({ id: p.id, ...s[p.id], seasonCorrect: tally[p.id].correct }));
-    // best: most correct, then conf, then season record
-    const best = order.slice().sort((a,b)=> b.correct-a.correct || b.conf-a.conf || b.seasonCorrect-a.seasonCorrect)[0];
-    const worst = order.slice().sort((a,b)=> a.correct-b.correct || a.conf-b.conf || a.seasonCorrect-b.seasonCorrect)[0];
+    const order = PLAYERS.map(p => ({ id: p.id, ...s[p.id], seasonCorrect: tally[p.id].correct, sub: subTimeFor(wk, p.id) }));
+    // best: most correct, then conf, then earliest submission
+    const best = order.slice().sort((a,b)=> b.correct-a.correct || b.conf-a.conf || a.sub.localeCompare(b.sub))[0];
+    // worst: fewest correct, then lowest conf, then LATEST submission (straggler pays)
+    const worst = order.slice().sort((a,b)=> a.correct-b.correct || a.conf-b.conf || b.sub.localeCompare(a.sub))[0];
     if (best) weeklyWins[best.id]++;
     if (worst) potFromPenalty.push({ player_id: worst.id, amount: WEEKLY_ANTE, week: wk });
   });
@@ -2234,7 +2246,7 @@ function generateTileValues() {
 
 // Compute the winner of a given week from graded picks.
 // Best record (correct) that week; ties broken by confidence points.
-function weeklyWinner(picks, week, reqByWeek) {
+function weeklyWinner(picks, week, reqByWeek, firstSubByWeek) {
   const stat = {};
   picks.filter(p => p.week_number === week && p.result && p.result !== "pending")
     .forEach(p => {
@@ -2244,21 +2256,30 @@ function weeklyWinner(picks, week, reqByWeek) {
       s.total++;
       if (p.result === "correct") { s.correct++; s.conf += pts; }
     });
+  // first-submission time for this week (earlier = wins ties); missing sorts last
+  const subTime = (id) => (firstSubByWeek?.[week]?.[id]) || "9999";
   const ranked = Object.entries(stat)
-    .map(([id, s]) => ({ id, ...s }))
-    .sort((a, b) => b.correct - a.correct || b.conf - a.conf);
+    .map(([id, s]) => ({ id, ...s, sub: subTime(id) }))
+    .sort((a, b) => b.correct - a.correct || b.conf - a.conf || a.sub.localeCompare(b.sub));
   return ranked.length ? ranked[0] : null;
 }
 
 async function renderAward() {
   renderWhoami();
 
-  const [picks, weeks, peels] = await Promise.all([
+  const [picks, weeks, peels, subs] = await Promise.all([
     sbGet(`picks?order=week_number.asc`),
     sbGet(`weeks?order=week_number.asc`),
     sbGet(`peels?order=tile_index.asc`).catch(() => []),
+    sbGet(`submissions?order=week_number.asc`).catch(() => []),
   ]);
   const reqByWeek = {}; (weeks || []).forEach(w => reqByWeek[w.week_number] = w.picks_required);
+  // first-submission time per week per player: firstSubByWeek[week][player] = iso string
+  const firstSubByWeek = {};
+  (subs || []).forEach(s => {
+    if (!s.first_submitted_at) return;
+    (firstSubByWeek[s.week_number] ||= {})[s.player_id] = s.first_submitted_at;
+  });
 
   // load tile dollar values; generate + persist once if the table is empty
   let tileValues = [];
@@ -2297,7 +2318,7 @@ async function renderAward() {
     const used = peelsByWeek[wk] || 0;
     const budget = PEELS_PER_WEEK + (multsByWeek[wk] || 0);
     if (used < budget) {
-      const w = weeklyWinner(picks, wk, reqByWeek);
+      const w = weeklyWinner(picks, wk, reqByWeek, firstSubByWeek);
       if (w) { pendingWeek = wk; pendingWinner = w; peelsUsedThisWeek = used; budgetThisWeek = budget; break; }
     }
   }
