@@ -578,6 +578,64 @@
     color: var(--ink); padding: 2px 8px; width: 155px; letter-spacing: 0.03em;
   }
   input.pid-edit:focus { outline: none; }
+
+  /* ---- Weekly Award / cutout ---- */
+  .award-intro { font-size: 13px; color: var(--ink-dim); line-height: 1.55; margin: 0 0 18px 2px; }
+  .award-intro b { color: var(--ink); }
+  .winner-banner {
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+    background: linear-gradient(90deg, rgba(245,196,81,0.12), transparent);
+    border: 1px solid var(--line); border-left: 3px solid var(--gold);
+    border-radius: 12px; padding: 16px 20px; margin-bottom: 20px;
+  }
+  .winner-banner .wtxt { font-size: 14px; color: var(--ink); line-height: 1.5; }
+  .winner-banner .wtxt b { color: var(--gold); font-family: 'Barlow Semi Condensed', sans-serif;
+    letter-spacing: 0.04em; font-size: 16px; }
+  .winner-banner .wtxt small { display:block; color: var(--ink-faint); font-size: 12px; margin-top: 2px; }
+
+  .cutout-wrap {
+    position: relative; width: 100%; max-width: 520px; margin: 0 auto 8px;
+    aspect-ratio: 4 / 5; border-radius: 14px; overflow: hidden;
+    border: 1px solid var(--line); background: var(--panel-2);
+  }
+  .cutout-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .cutout-missing {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    text-align: center; color: var(--ink-faint); font-size: 13px; padding: 30px; line-height: 1.6;
+  }
+  .cutout-grid {
+    position: absolute; inset: 0; display: grid;
+    grid-template-columns: repeat(4, 1fr); grid-template-rows: repeat(5, 1fr);
+  }
+  .tile {
+    background: var(--panel); border: 1px solid var(--bg);
+    display: flex; align-items: center; justify-content: center;
+    transition: opacity .5s ease, transform .4s ease;
+    position: relative;
+  }
+  .tile.peeled { opacity: 0; pointer-events: none; transform: scale(1.04); }
+  .tile.peelable { cursor: pointer; }
+  .tile.peelable:hover { background: var(--panel-2); }
+  .tile.peelable::after {
+    content: "PEEL"; font-family: 'Barlow Semi Condensed', sans-serif; font-weight: 700;
+    font-size: 11px; letter-spacing: 0.14em; color: var(--gold); opacity: 0;
+    transition: opacity .15s;
+  }
+  .tile.peelable:hover::after { opacity: 1; }
+  .tile .tnum { font-family: 'Barlow Semi Condensed', sans-serif; font-size: 11px; color: var(--ink-faint); position: absolute; top: 4px; left: 6px; }
+
+  .award-status { text-align: center; font-size: 13px; color: var(--ink-dim); margin-top: 14px; }
+  .award-log {
+    margin-top: 22px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
+  }
+  .award-log h3 {
+    font-family: 'Barlow Semi Condensed', sans-serif; font-size: 12px; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--ink-dim); font-weight: 600; padding: 13px 16px; border-bottom: 1px solid var(--line);
+  }
+  .log-row { display: flex; justify-content: space-between; padding: 9px 16px; border-bottom: 1px solid var(--line); font-size: 13px; }
+  .log-row:last-child { border-bottom: none; }
+  .log-row .who { font-weight: 600; }
+  .log-row .when { color: var(--ink-faint); }
   .placed-card .pteam {
     flex: 1; font-family: 'Barlow Semi Condensed', sans-serif; font-weight: 700;
     font-size: 22px; letter-spacing: 0.02em;
@@ -651,6 +709,7 @@
   <nav id="tabs" class="tabs" style="display:none">
     <button class="tab active" data-tab="week">This Week</button>
     <button class="tab" data-tab="standings">Standings</button>
+    <button class="tab" data-tab="award">Weekly Award</button>
     <button class="tab" data-tab="field">Field</button>
   </nav>
 
@@ -1892,6 +1951,136 @@ function wireEntryRename() {
   });
 }
 
+// ============================================================
+//  WEEKLY AWARD — best weekly record peels a cutout section
+// ============================================================
+const CUTOUT_IMAGE = "cutout.jpg";   // commit this file next to index.html
+const TILE_COUNT = 20;               // 4 x 5
+
+// Compute the winner of a given week from graded picks.
+// Best record (correct) that week; ties broken by confidence points.
+function weeklyWinner(picks, week, reqByWeek) {
+  const stat = {};
+  picks.filter(p => p.week_number === week && p.result && p.result !== "pending")
+    .forEach(p => {
+      const req = reqByWeek[week] || 8;
+      const pts = req - p.rank + 1;
+      const s = (stat[p.player_id] ||= { correct: 0, conf: 0, total: 0 });
+      s.total++;
+      if (p.result === "correct") { s.correct++; s.conf += pts; }
+    });
+  const ranked = Object.entries(stat)
+    .map(([id, s]) => ({ id, ...s }))
+    .sort((a, b) => b.correct - a.correct || b.conf - a.conf);
+  return ranked.length ? ranked[0] : null;
+}
+
+async function renderAward() {
+  renderWhoami();
+
+  const [picks, weeks, peels] = await Promise.all([
+    sbGet(`picks?order=week_number.asc`),
+    sbGet(`weeks?order=week_number.asc`),
+    sbGet(`peels?order=tile_index.asc`).catch(() => []),
+  ]);
+  const reqByWeek = {}; (weeks || []).forEach(w => reqByWeek[w.week_number] = w.picks_required);
+
+  // which weeks are fully graded (have at least one non-pending pick)?
+  const gradedWeeks = [...new Set((picks || [])
+    .filter(p => p.result && p.result !== "pending")
+    .map(p => p.week_number))].sort((a, b) => a - b);
+
+  const peeledTiles = new Set((peels || []).map(p => p.tile_index));
+  const peeledWeeks = new Set((peels || []).map(p => p.week_number));
+
+  // find the most recent graded week that hasn't been peeled yet -> an award is pending
+  let pendingWeek = null, pendingWinner = null;
+  for (const wk of gradedWeeks) {
+    if (!peeledWeeks.has(wk)) {
+      const w = weeklyWinner(picks, wk, reqByWeek);
+      if (w) { pendingWeek = wk; pendingWinner = w; break; }
+    }
+  }
+
+  const iAmWinner = pendingWinner && pendingWinner.id === ME;
+  const winnerName = pendingWinner ? (PLAYERS.find(p => p.id === pendingWinner.id)?.name || pendingWinner.id) : null;
+  const canPeel = iAmWinner && peeledTiles.size < TILE_COUNT;
+
+  // banner
+  let banner = "";
+  if (pendingWinner) {
+    banner = `
+      <div class="winner-banner">
+        <div class="wtxt"><b>${winnerName} won Week ${pendingWeek}</b>
+          <small>${pendingWinner.correct} correct · ${pendingWinner.conf} confidence — earns one peel</small></div>
+        ${canPeel
+          ? `<div style="color:var(--gold);font-family:'Barlow Semi Condensed';font-weight:700;letter-spacing:0.1em;text-transform:uppercase;font-size:13px">Your peel — pick a tile</div>`
+          : iAmWinner
+            ? `<div style="color:var(--ink-faint);font-size:12px">Fully revealed</div>`
+            : `<div style="color:var(--ink-faint);font-size:12px">Only ${winnerName} can peel</div>`}
+      </div>`;
+  } else if (peeledTiles.size >= TILE_COUNT) {
+    banner = `<div class="winner-banner"><div class="wtxt"><b>Fully revealed.</b>
+      <small>Every section has been peeled. Behold.</small></div></div>`;
+  } else {
+    banner = `<div class="winner-banner"><div class="wtxt"><b>No award pending.</b>
+      <small>Once a week's picks are graded, the best record earns a peel.</small></div></div>`;
+  }
+
+  // tiles
+  let tilesHtml = "";
+  for (let i = 0; i < TILE_COUNT; i++) {
+    const peeled = peeledTiles.has(i);
+    const cls = peeled ? "peeled" : (canPeel ? "peelable" : "");
+    tilesHtml += `<div class="tile ${cls}" data-tile="${i}"><span class="tnum">${i+1}</span></div>`;
+  }
+
+  // log
+  const logRows = (peels || []).slice().sort((a,b) => (a.created_at||"").localeCompare(b.created_at||""))
+    .map(p => {
+      const nm = PLAYERS.find(x => x.id === p.player_id)?.name || p.player_id;
+      return `<div class="log-row"><span class="who">${nm}</span>
+        <span class="when">Week ${p.week_number} · tile ${p.tile_index + 1}</span></div>`;
+    }).join("");
+
+  app.innerHTML = `
+    <div class="st-section-title">Weekly Award — peel the cutout</div>
+    <p class="award-intro">Every week, whoever picked the best record earns the right to peel one section
+      off the cutout. Best record wins; confidence points break ties. <b>Only that week's winner can peel.</b>
+      ${peeledTiles.size} of ${TILE_COUNT} sections revealed.</p>
+    ${banner}
+    <div class="cutout-wrap">
+      <img class="cutout-img" src="${CUTOUT_IMAGE}" alt="cutout"
+        onerror="this.style.display='none';this.nextElementSibling.nextElementSibling.style.display='flex'">
+      <div class="cutout-grid">${tilesHtml}</div>
+      <div class="cutout-missing" style="display:none">
+        No image yet. Commit a photo named <b>${CUTOUT_IMAGE}</b> next to index.html in your repo,
+        and it'll appear here under the tiles.
+      </div>
+    </div>
+    <div class="award-status">${canPeel ? "Tap a covered tile to peel it." : ""}</div>
+    ${logRows ? `<div class="award-log"><h3>Peel history</h3>${logRows}</div>` : ""}`;
+
+  if (canPeel) {
+    app.querySelectorAll(".tile.peelable").forEach(t => {
+      t.onclick = () => peelTile(+t.dataset.tile, pendingWeek);
+    });
+  }
+}
+
+async function peelTile(tileIndex, week) {
+  if (!confirm("Peel this section? You get one per week you win — choose deliberately.")) return;
+  try {
+    await sb("peels", {
+      method: "POST",
+      body: JSON.stringify({ tile_index: tileIndex, week_number: week, player_id: ME }),
+    });
+    renderAward();
+  } catch (e) {
+    alert("Couldn't peel: " + e.message);
+  }
+}
+
 // ---- Boot ----
 async function boot() {
   if (!CONFIGURED) {
@@ -1939,6 +2128,7 @@ function routeTab() {
   app.innerHTML = `<div class="center-msg">Loading…</div>`;
   if (CURRENT_TAB === "field") renderField();
   else if (CURRENT_TAB === "standings") renderStandings();
+  else if (CURRENT_TAB === "award") renderAward();
   else renderWeek();
 }
 
