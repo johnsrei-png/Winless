@@ -677,6 +677,24 @@
   .settle-amt {
     font-family: 'Barlow Semi Condensed', sans-serif; font-weight: 700; font-size: 18px; color: var(--gold);
   }
+
+  /* ---- Season side pot ---- */
+  .pot-hero {
+    text-align: center; background: linear-gradient(160deg, rgba(245,196,81,0.14), rgba(245,196,81,0.03));
+    border: 1px solid var(--line); border-radius: 14px; padding: 22px; margin-bottom: 12px;
+  }
+  .pot-amt {
+    font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-size: 52px; line-height: 1;
+    color: var(--gold); letter-spacing: 0.02em;
+  }
+  .pot-sub {
+    font-family: 'Barlow Semi Condensed', sans-serif; font-size: 11px; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--ink-faint); margin-top: 6px;
+  }
+  .pot-leader {
+    text-align: center; font-size: 14px; color: var(--ink-dim); margin-bottom: 6px;
+  }
+  .pot-leader b { color: var(--gold); font-family: 'Barlow Semi Condensed', sans-serif; letter-spacing: 0.04em; }
   .placed-card .pteam {
     flex: 1; font-family: 'Barlow Semi Condensed', sans-serif; font-weight: 700;
     font-size: 22px; letter-spacing: 0.02em;
@@ -1641,13 +1659,14 @@ async function renderStandings() {
   const anyPending = ranked.some(r => r.pending > 0);
 
   // ===== Money ledger from peels =====
-  let peels = [], tileValues = [];
+  let peels = [], tileValues = [], potLedger = [];
   try {
-    [peels, tileValues] = await Promise.all([
+    [peels, tileValues, potLedger] = await Promise.all([
       sbGet(`peels?order=created_at.asc`).catch(() => []),
       sbGet(`tile_values?order=tile_index.asc`).catch(() => []),
+      sbGet(`pot_ledger?order=id.asc`).catch(() => []),
     ]);
-  } catch (e) { peels = []; tileValues = []; }
+  } catch (e) { peels = []; tileValues = []; potLedger = []; }
   const valueByTile = {}; const typeByTile = {};
   (tileValues || []).forEach(t => { valueByTile[t.tile_index] = Number(t.amount); typeByTile[t.tile_index] = t.type || "money"; });
 
@@ -1691,6 +1710,87 @@ async function renderStandings() {
   }
   const nameOf = id => PLAYERS.find(p => p.id === id)?.name || id;
   const anyMoney = (peels || []).length > 0 && (tileValues || []).length > 0;
+
+  // ===== Season Side Pot =====
+  // fills from: (a) $2 weekly worst-record penalty, (b) pot-tile peels.
+  // won at season end by MOST WEEKLY WINS (best record that week), conf then season record as tiebreak.
+  const WEEKLY_ANTE = 2;
+
+  // per-week best & worst record among the three (uses graded picks)
+  const gradedWeekNums = [...new Set((picks || [])
+    .filter(p => p.result && p.result !== "pending").map(p => p.week_number))].sort((a,b)=>a-b);
+
+  function weekRecords(wk) {
+    const s = {}; PLAYERS.forEach(p => s[p.id] = { correct:0, conf:0 });
+    picks.filter(p => p.week_number === wk && p.result && p.result !== "pending").forEach(p => {
+      const req = reqByWeek[wk] || 8; const pts = req - p.rank + 1;
+      if (!s[p.player_id]) return;
+      if (p.result === "correct") { s[p.player_id].correct++; s[p.player_id].conf += pts; }
+    });
+    return s;
+  }
+
+  // weekly wins per player + pot contributions from worst record
+  const weeklyWins = {}; PLAYERS.forEach(p => weeklyWins[p.id] = 0);
+  const potFromPenalty = [];   // {player_id, amount, week}
+  gradedWeekNums.forEach(wk => {
+    const s = weekRecords(wk);
+    const order = PLAYERS.map(p => ({ id: p.id, ...s[p.id], seasonCorrect: tally[p.id].correct }));
+    // best: most correct, then conf, then season record
+    const best = order.slice().sort((a,b)=> b.correct-a.correct || b.conf-a.conf || b.seasonCorrect-a.seasonCorrect)[0];
+    const worst = order.slice().sort((a,b)=> a.correct-b.correct || a.conf-b.conf || a.seasonCorrect-b.seasonCorrect)[0];
+    if (best) weeklyWins[best.id]++;
+    if (worst) potFromPenalty.push({ player_id: worst.id, amount: WEEKLY_ANTE, week: wk });
+  });
+
+  // pot-tile contributions from the ledger table
+  const potTileContribs = (potLedger || []).map(r => ({ player_id: r.player_id, amount: Number(r.amount), week: r.week_number, reason: r.reason || "pot tile" }));
+
+  // combine contributions
+  const allContribs = [
+    ...potFromPenalty.map(c => ({ ...c, reason: "worst record" })),
+    ...potTileContribs,
+  ];
+  const potTotal = allContribs.reduce((s,c)=> s + c.amount, 0);
+  const paidBy = {}; PLAYERS.forEach(p => paidBy[p.id] = 0);
+  allContribs.forEach(c => { if (paidBy[c.player_id] != null) paidBy[c.player_id] += c.amount; });
+
+  // projected winner = most weekly wins (conf/among season record as tiebreak already baked via ordering)
+  const winsRanked = PLAYERS.map(p => ({ id: p.id, wins: weeklyWins[p.id], seasonCorrect: tally[p.id].correct, conf: tally[p.id].conf }))
+    .sort((a,b)=> b.wins-a.wins || b.seasonCorrect-a.seasonCorrect || b.conf-a.conf);
+  const potLeader = winsRanked[0];
+  const potTied = winsRanked.filter(w => w.wins === potLeader.wins && potLeader.wins > 0);
+
+  const potHtml = (potTotal > 0 || gradedWeekNums.length) ? `
+    <div class="st-weekly">
+      <div class="st-section-title">Season Side Pot</div>
+      <div class="pot-hero">
+        <div class="pot-amt">$${potTotal.toFixed(2)}</div>
+        <div class="pot-sub">winner-take-all · goes to most weekly wins</div>
+      </div>
+      <div class="pot-leader">
+        ${potLeader && potLeader.wins > 0
+          ? (potTied.length > 1
+              ? `Tied lead: ${potTied.map(t=>nameOf(t.id)).join(" & ")} — ${potLeader.wins} weekly win${potLeader.wins!==1?"s":""} each`
+              : `Projected winner: <b>${nameOf(potLeader.id)}</b> — ${potLeader.wins} weekly win${potLeader.wins!==1?"s":""}`)
+          : "No weeks decided yet."}
+      </div>
+      <div class="standings-table" style="margin-top:14px">
+        <div class="st-head" style="grid-template-columns:1fr 90px 110px">
+          <div>Player</div><div>Weekly Wins</div><div>Paid In</div>
+        </div>
+        ${winsRanked.map(w => `
+          <div class="st-row" style="grid-template-columns:1fr 90px 110px">
+            <div class="st-name">${nameOf(w.id)}</div>
+            <div class="st-val">${w.wins}</div>
+            <div class="st-val" style="color:var(--ink-dim)">$${paidBy[w.id].toFixed(2)}</div>
+          </div>`).join("")}
+      </div>
+      <p class="field-note">The pot fills $${WEEKLY_ANTE} each week from whoever had the <b>worst</b> record
+        (confidence, then season record, breaks ties), plus any 🏺 pot tiles peeled. At season's end it's
+        <b>winner-take-all</b> to whoever won the most individual weeks.</p>
+    </div>` : "";
+
   const ledgerHtml = anyMoney ? `
     <div class="st-weekly">
       <div class="st-section-title">Money — the peel ledger</div>
@@ -1737,6 +1837,7 @@ async function renderStandings() {
       <div class="st-section-title">Week by week</div>
       <div class="wk-grid"><table>${gridHead}${gridBody}</table></div>
     </div>
+    ${potHtml}
     ${ledgerHtml}`;
 }
 
@@ -2018,6 +2119,7 @@ async function commishTools(overlay) {
       await sb(`field_picks?id=gte.0`, { method: "DELETE" });
       await sb(`peels?id=gte.0`, { method: "DELETE" });
       await sb(`tile_values?id=gte.0`, { method: "DELETE" });
+      await sb(`pot_ledger?id=gte.0`, { method: "DELETE" }).catch(() => {});
       await sb(`weeks?id=gte.0`, { method: "DELETE" });
       await sb(`entries?id=gte.0`, {
         method: "PATCH", body: JSON.stringify({ status: "alive", died_week: null }),
@@ -2098,10 +2200,10 @@ const PEELS_PER_WEEK = 4;            // winner peels this many per week
 //  - negative:   the peeler owes both others
 //  - multiplier: doubles the NEXT peel (good or bad); if it's the last peel, grants 1 bonus peel
 const TILE_PLAN = [
-  // positive money (~78)
-  { type: "money", amount: 0.25, count: 24 },
-  { type: "money", amount: 0.50, count: 16 },
-  { type: "money", amount: 1.00, count: 15 },
+  // positive money (~74)
+  { type: "money", amount: 0.25, count: 22 },
+  { type: "money", amount: 0.50, count: 15 },
+  { type: "money", amount: 1.00, count: 14 },
   { type: "money", amount: 2.00, count: 11 },
   { type: "money", amount: 3.00, count: 6 },
   { type: "money", amount: 5.00, count: 4 },
@@ -2110,11 +2212,15 @@ const TILE_PLAN = [
   { type: "negative", amount: 1.00, count: 7 },
   { type: "negative", amount: 2.00, count: 4 },
   { type: "negative", amount: 3.00, count: 2 },
+  // pot tiles (~4): peel it, that $ goes into the season side pot (from the peeler)
+  { type: "pot", amount: 1.00, count: 2 },
+  { type: "pot", amount: 2.00, count: 1 },
+  { type: "pot", amount: 3.00, count: 1 },
   // jackpot (1)
   { type: "jackpot", amount: 25.00, count: 1 },
   // multipliers (~6): x2 the next peel
   { type: "multiplier", amount: 2, count: 6 },
-];  // 24+16+15+11+6+4+2 + 7+4+2 + 1 + 6 = 98 ... fill remainder with $0.25 money
+];  // fill remainder with $0.25 money
 function generateTileValues() {
   const pool = [];
   TILE_PLAN.forEach(({ type, amount, count }) => {
@@ -2245,6 +2351,7 @@ async function renderAward() {
     const type = typeByTile[p.tile_index] || "money";
     const base = valueByTile[p.tile_index] || 0;
     if (type === "multiplier") return { txt: "×2 multiplier", cls: "var(--gold)" };
+    if (type === "pot") return { txt: `🏺 $${base.toFixed(2)} to the pot`, cls: "var(--gold)" };
     // effective is signed per-other-player amount actually owed (may include x2)
     const eff = (p.effective != null) ? Number(p.effective) : (type === "negative" ? -base : base);
     if (eff < 0) return { txt: `−$${Math.abs(eff).toFixed(2)} you owe each`, cls: "var(--alert)" };
@@ -2308,8 +2415,10 @@ async function peelTile(tileIndex, week, typeByTile, valueByTile, multiplierArme
 
   // resolve effective signed per-other-player amount
   let effective = 0;
+  let potContribution = 0;
   if (type === "money" || type === "jackpot") effective = base * mult;
   else if (type === "negative") effective = -base * mult;
+  else if (type === "pot") { effective = 0; potContribution = base * mult; }  // peeler feeds the pot
   else if (type === "multiplier") effective = 0;   // no money; arms next peel
 
   try {
@@ -2319,10 +2428,21 @@ async function peelTile(tileIndex, week, typeByTile, valueByTile, multiplierArme
         tile_index: tileIndex, week_number: week, player_id: ME, effective,
       }),
     });
+    // pot tile: record a contribution to the side pot
+    if (potContribution > 0) {
+      await sb("pot_ledger", {
+        method: "POST",
+        body: JSON.stringify({
+          player_id: ME, amount: potContribution, week_number: week, reason: "pot tile",
+        }),
+      }).catch(() => {});
+    }
     // feedback popup
     setTimeout(() => {
       if (type === "multiplier") {
         alert("✖️2 MULTIPLIER! Your next peel is doubled — good or bad. You get a bonus peel to use it.");
+      } else if (type === "pot") {
+        alert(`🏺 POT TILE! You drop $${potContribution.toFixed(2)} into the season side pot.${mult>1?" (×2 applied!)":""}`);
       } else if (type === "jackpot") {
         alert(`💰💰 JACKPOT! $${effective.toFixed(2)} from EACH of the others — $${(effective*2).toFixed(2)} total!${mult>1?" (×2 applied!)":""}`);
       } else if (effective < 0) {
