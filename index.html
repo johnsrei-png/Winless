@@ -195,6 +195,31 @@
   .hint { font-size: 12px; color: var(--ink-faint); margin: 0 0 18px 2px; line-height: 1.5; }
 
   .rank-list { display: flex; flex-direction: column; gap: 8px; }
+
+  /* ---- Pick screen two-column layout ---- */
+  .pick-grid { display: grid; grid-template-columns: 1fr 280px; gap: 22px; align-items: start; }
+  @media (max-width: 720px) { .pick-grid { grid-template-columns: 1fr; } }
+  .matchups {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    padding: 16px; position: sticky; top: 16px;
+  }
+  .matchups .section-title { margin: 0 0 12px 2px; }
+  .matchup-loading, .matchup-empty { font-size: 13px; color: var(--ink-faint); padding: 8px 2px; line-height: 1.5; }
+  .matchup-list { display: flex; flex-direction: column; }
+  .matchup {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 10px 4px; border-bottom: 1px solid var(--line);
+  }
+  .matchup:last-child { border-bottom: none; }
+  .mteams { display: flex; flex-direction: column; gap: 3px; }
+  .mrow { display: flex; align-items: center; gap: 7px; }
+  .mabbr { font-family: 'Barlow Semi Condensed', sans-serif; font-weight: 600; font-size: 14px; letter-spacing: 0.02em; }
+  .mtag { font-size: 9px; letter-spacing: 0.1em; color: var(--ink-faint); }
+  .mtag.home { color: var(--live); }
+  .mline { text-align: right; flex-shrink: 0; }
+  .mspread { font-family: 'Barlow Semi Condensed', sans-serif; font-weight: 700; font-size: 14px; color: var(--alert); }
+  .mwhen { font-size: 10px; color: var(--ink-faint); margin-top: 2px; }
+  .matchup-note { font-size: 11px; color: var(--ink-faint); line-height: 1.5; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
   .slot {
     display: flex;
     align-items: center;
@@ -951,21 +976,32 @@ async function renderWeek() {
   }
 
   app.innerHTML = headerHtml + `
-    <div class="section-title">Your ranked losers — most confident at the top</div>
-    <p class="hint">Pick ${picksReq} different teams you think will lose this week, ranked by confidence.
-      Rank 1 is worth ${picksReq} points, down to 1 point at the bottom. Your points get summed with
-      Tyler's and Kurt's to build the master ranking${iSubmitted ? " — resubmit any time before lock to change your list." : "."}</p>
-    <div class="rank-list">${slots}</div>
-    <div class="submitbar">
-      <button class="btn btn-primary" id="submit">${iSubmitted ? "Update my list" : "Submit my list"}</button>
-      <span class="msg" id="msg"></span>
-    </div>
-    ${allIn ? `
-      <div class="lockbar">
-        <div class="lbltxt"><b>All three lists are in.</b> Lock the week to reveal the master
-          ranking and start placing entries. Once locked, picks are final.</div>
-        <button class="btn btn-lock" id="lockweek">Lock week &amp; reveal</button>
-      </div>` : ""}`;
+    <div class="pick-grid">
+      <div class="pick-main">
+        <div class="section-title">Your ranked losers — most confident at the top</div>
+        <p class="hint">Pick ${picksReq} different teams you think will lose this week, ranked by confidence.
+          Rank 1 is worth ${picksReq} points, down to 1 point at the bottom. Your points get summed with
+          Tyler's and Kurt's to build the master ranking${iSubmitted ? " — resubmit any time before lock to change your list." : "."}</p>
+        <div class="rank-list">${slots}</div>
+        <div class="submitbar">
+          <button class="btn btn-primary" id="submit">${iSubmitted ? "Update my list" : "Submit my list"}</button>
+          <span class="msg" id="msg"></span>
+        </div>
+        ${allIn ? `
+          <div class="lockbar">
+            <div class="lbltxt"><b>All three lists are in.</b> Lock the week to reveal the master
+              ranking and start placing entries. Once locked, picks are final.</div>
+            <button class="btn btn-lock" id="lockweek">Lock week &amp; reveal</button>
+          </div>` : ""}
+      </div>
+      <aside class="matchups" id="matchups">
+        <div class="section-title">Week ${wk.week_number} Matchups</div>
+        <div class="matchup-loading">Loading lines…</div>
+      </aside>
+    </div>`;
+
+  // load matchups + lines from ESPN (client-side) into the side panel
+  loadMatchups(wk.week_number);
 
   // prevent picking the same team twice — live dedupe styling
   const selects = () => Array.from(app.querySelectorAll("select.team"));
@@ -2078,6 +2114,62 @@ async function peelTile(tileIndex, week) {
     renderAward();
   } catch (e) {
     alert("Couldn't peel: " + e.message);
+  }
+}
+
+// Fetch this week's NFL matchups + lines from ESPN and fill the side panel.
+async function loadMatchups(week) {
+  const panel = document.getElementById("matchups");
+  if (!panel) return;
+  const body = panel.querySelector(".matchup-loading");
+  try {
+    const url = `https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard`
+              + `?seasontype=2&week=${week}&dates=2025`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("ESPN " + res.status);
+    const data = await res.json();
+    const games = (data.events || []).map(ev => {
+      const comp = ev.competitions?.[0];
+      if (!comp) return null;
+      const cs = comp.competitors || [];
+      const home = cs.find(c => c.homeAway === "home");
+      const away = cs.find(c => c.homeAway === "away");
+      if (!home || !away) return null;
+      const odds = comp.odds?.[0];
+      // details is like "KC -6.5"; overUnder is a number. Fall back gracefully.
+      const line = odds?.details || (odds?.overUnder ? `O/U ${odds.overUnder}` : "—");
+      const dt = ev.date ? new Date(ev.date) : null;
+      const when = dt ? dt.toLocaleDateString("en-US", { weekday: "short" }) + " " +
+        dt.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : "";
+      return {
+        homeAbbr: home.team?.abbreviation, awayAbbr: away.team?.abbreviation,
+        homeName: home.team?.shortDisplayName || home.team?.abbreviation,
+        awayName: away.team?.shortDisplayName || away.team?.abbreviation,
+        line, when, date: dt ? dt.getTime() : 0,
+      };
+    }).filter(Boolean).sort((a, b) => a.date - b.date);
+
+    if (!games.length) {
+      body.outerHTML = `<div class="matchup-empty">No matchups posted yet for Week ${week}.</div>`;
+      return;
+    }
+
+    const rows = games.map(g => `
+      <div class="matchup">
+        <div class="mteams">
+          <div class="mrow"><span class="mabbr">${g.awayName}</span><span class="mtag">@</span></div>
+          <div class="mrow"><span class="mabbr">${g.homeName}</span><span class="mtag home">HOME</span></div>
+        </div>
+        <div class="mline">
+          <div class="mspread">${g.line}</div>
+          <div class="mwhen">${g.when}</div>
+        </div>
+      </div>`).join("");
+
+    body.outerHTML = `<div class="matchup-list">${rows}</div>
+      <div class="matchup-note">Lines from ESPN. Negative number = favorite. Bet against the favorite's opponent for a safer "loser."</div>`;
+  } catch (e) {
+    body.outerHTML = `<div class="matchup-empty">Couldn't load matchups (${e.message}).</div>`;
   }
 }
 
