@@ -1644,20 +1644,35 @@ async function renderStandings() {
       sbGet(`tile_values?order=tile_index.asc`).catch(() => []),
     ]);
   } catch (e) { peels = []; tileValues = []; }
-  const valueByTile = {}; (tileValues || []).forEach(t => valueByTile[t.tile_index] = Number(t.amount));
+  const valueByTile = {}; const typeByTile = {};
+  (tileValues || []).forEach(t => { valueByTile[t.tile_index] = Number(t.amount); typeByTile[t.tile_index] = t.type || "money"; });
+
+  // per-peel effective signed amount (what EACH other player owes the peeler; negative = peeler owes them)
+  const effOf = (p) => {
+    if (p.effective != null) return Number(p.effective);
+    const type = typeByTile[p.tile_index] || "money";
+    if (type === "multiplier") return 0;
+    const base = valueByTile[p.tile_index] || 0;
+    return type === "negative" ? -base : base;
+  };
 
   const earned = {}; PLAYERS.forEach(p => earned[p.id] = 0);
   (peels || []).forEach(p => {
-    const amt = valueByTile[p.tile_index] || 0;
-    if (earned[p.player_id] != null) earned[p.player_id] += amt;
+    if (earned[p.player_id] != null) earned[p.player_id] += effOf(p);
   });
 
   const ids = PLAYERS.map(p => p.id);
   const owes = {}; ids.forEach(a => { owes[a] = {}; ids.forEach(b => { if (a!==b) owes[a][b]=0; }); });
   (peels || []).forEach(p => {
-    const amt = valueByTile[p.tile_index] || 0;
+    const amt = effOf(p);              // signed; negative means peeler owes each other
     const peeler = p.player_id;
-    ids.forEach(other => { if (other !== peeler && owes[other]) owes[other][peeler] += amt; });
+    ids.forEach(other => {
+      if (other !== peeler && owes[other]) {
+        // positive: other owes peeler amt. negative: peeler owes other |amt|.
+        if (amt >= 0) owes[other][peeler] += amt;
+        else owes[peeler][other] += -amt;
+      }
+    });
   });
   const settlements = [];
   for (let i = 0; i < ids.length; i++) {
@@ -2073,31 +2088,42 @@ const CUTOUT_IMAGE = "cutout.jpg";   // commit this file next to index.html
 const TILE_COUNT = 100;              // 10 x 10
 const PEELS_PER_WEEK = 4;            // winner peels this many per week
 
-// Dollar value distribution across the 100 tiles. Each losing player owes the
-// peeler this amount (so the peeler collects 2x the tile value total).
-// Weighted: lots of small, rare big.
-const TILE_VALUE_PLAN = [
-  { amount: 0.25, count: 30 },
-  { amount: 0.50, count: 20 },
-  { amount: 1.00, count: 20 },
-  { amount: 2.00, count: 13 },
-  { amount: 3.00, count: 7 },
-  { amount: 5.00, count: 7 },
-  { amount: 10.00, count: 3 },
-];  // sums to 100
-
-// Build a shuffled array of 100 amounts and assign to tile indices 0..99.
+// Tile types across the 100 tiles.
+//  - money:      positive $, both others owe the peeler
+//  - jackpot:    big positive $ (one grail tile)
+//  - negative:   the peeler owes both others
+//  - multiplier: doubles the NEXT peel (good or bad); if it's the last peel, grants 1 bonus peel
+const TILE_PLAN = [
+  // positive money (~78)
+  { type: "money", amount: 0.25, count: 24 },
+  { type: "money", amount: 0.50, count: 16 },
+  { type: "money", amount: 1.00, count: 15 },
+  { type: "money", amount: 2.00, count: 11 },
+  { type: "money", amount: 3.00, count: 6 },
+  { type: "money", amount: 5.00, count: 4 },
+  { type: "money", amount: 10.00, count: 2 },
+  // negatives (~13): you owe both others
+  { type: "negative", amount: 1.00, count: 7 },
+  { type: "negative", amount: 2.00, count: 4 },
+  { type: "negative", amount: 3.00, count: 2 },
+  // jackpot (1)
+  { type: "jackpot", amount: 25.00, count: 1 },
+  // multipliers (~6): x2 the next peel
+  { type: "multiplier", amount: 2, count: 6 },
+];  // 24+16+15+11+6+4+2 + 7+4+2 + 1 + 6 = 98 ... fill remainder with $0.25 money
 function generateTileValues() {
   const pool = [];
-  TILE_VALUE_PLAN.forEach(({ amount, count }) => {
-    for (let i = 0; i < count; i++) pool.push(amount);
+  TILE_PLAN.forEach(({ type, amount, count }) => {
+    for (let i = 0; i < count; i++) pool.push({ type, amount });
   });
-  // Fisher-Yates shuffle
+  while (pool.length < TILE_COUNT) pool.push({ type: "money", amount: 0.25 });
+  pool.length = TILE_COUNT;
+  // shuffle
   for (let i = pool.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [pool[i], pool[j]] = [pool[j], pool[i]];
   }
-  return pool.map((amount, tile_index) => ({ tile_index, amount }));
+  return pool.map((t, tile_index) => ({ tile_index, type: t.type, amount: t.amount }));
 }
 
 // Compute the winner of a given week from graded picks.
@@ -2138,7 +2164,11 @@ async function renderAward() {
       tileValues = gen;
     }
   } catch (e) { tileValues = []; }
-  const valueByTile = {}; tileValues.forEach(t => valueByTile[t.tile_index] = Number(t.amount));
+  const valueByTile = {}; const typeByTile = {};
+  (tileValues || []).forEach(t => { valueByTile[t.tile_index] = Number(t.amount); typeByTile[t.tile_index] = t.type || "money"; });
+
+  // pending multiplier: did the peeler's LAST peel this week reveal an unused multiplier?
+  // We track it via the peel records' effective values (multiplier peel stored with effective=0, mult=true).
 
   // which weeks are fully graded (have at least one non-pending pick)?
   const gradedWeeks = [...new Set((picks || [])
@@ -2146,20 +2176,32 @@ async function renderAward() {
     .map(p => p.week_number))].sort((a, b) => a - b);
 
   const peeledTiles = new Set((peels || []).map(p => p.tile_index));
-  // count peels claimed per week
+  // count peels claimed per week, and multiplier tiles revealed per week (each grants +1 bonus peel)
   const peelsByWeek = {};
-  (peels || []).forEach(p => { peelsByWeek[p.week_number] = (peelsByWeek[p.week_number] || 0) + 1; });
+  const multsByWeek = {};
+  (peels || []).forEach(p => {
+    peelsByWeek[p.week_number] = (peelsByWeek[p.week_number] || 0) + 1;
+    if (typeByTile[p.tile_index] === "multiplier") multsByWeek[p.week_number] = (multsByWeek[p.week_number] || 0) + 1;
+  });
 
   // find earliest graded week that hasn't used all its peels yet -> award pending
-  let pendingWeek = null, pendingWinner = null, peelsUsedThisWeek = 0;
+  // budget = base peels + 1 bonus per multiplier revealed that week
+  let pendingWeek = null, pendingWinner = null, peelsUsedThisWeek = 0, budgetThisWeek = PEELS_PER_WEEK;
   for (const wk of gradedWeeks) {
     const used = peelsByWeek[wk] || 0;
-    if (used < PEELS_PER_WEEK) {
+    const budget = PEELS_PER_WEEK + (multsByWeek[wk] || 0);
+    if (used < budget) {
       const w = weeklyWinner(picks, wk, reqByWeek);
-      if (w) { pendingWeek = wk; pendingWinner = w; peelsUsedThisWeek = used; break; }
+      if (w) { pendingWeek = wk; pendingWinner = w; peelsUsedThisWeek = used; budgetThisWeek = budget; break; }
     }
   }
-  const peelsLeftThisWeek = pendingWeek ? PEELS_PER_WEEK - peelsUsedThisWeek : 0;
+  const peelsLeftThisWeek = pendingWeek ? budgetThisWeek - peelsUsedThisWeek : 0;
+
+  // is there a pending (unused) multiplier for this week? = last peel this week was a multiplier
+  const thisWeekPeels = (peels || []).filter(p => p.week_number === pendingWeek)
+    .sort((a,b) => (a.created_at||"").localeCompare(b.created_at||""));
+  const lastPeel = thisWeekPeels[thisWeekPeels.length - 1];
+  const multiplierArmed = lastPeel && typeByTile[lastPeel.tile_index] === "multiplier";
 
   const iAmWinner = pendingWinner && pendingWinner.id === ME;
   const winnerName = pendingWinner ? (PLAYERS.find(p => p.id === pendingWinner.id)?.name || pendingWinner.id) : null;
@@ -2173,7 +2215,7 @@ async function renderAward() {
         <div class="wtxt"><b>${winnerName} won Week ${pendingWeek}</b>
           <small>${pendingWinner.correct} correct · ${pendingWinner.conf} confidence — earns ${PEELS_PER_WEEK} peels${peelsUsedThisWeek ? ` (${peelsLeftThisWeek} left)` : ""}</small></div>
         ${canPeel
-          ? `<div style="color:var(--gold);font-family:'Barlow Semi Condensed';font-weight:700;letter-spacing:0.1em;text-transform:uppercase;font-size:13px">Your peel — pick ${peelsLeftThisWeek === 1 ? "a tile" : peelsLeftThisWeek + " tiles"}</div>`
+          ? `<div style="color:var(--gold);font-family:'Barlow Semi Condensed';font-weight:700;letter-spacing:0.1em;text-transform:uppercase;font-size:13px">${multiplierArmed ? "×2 ARMED — next peel doubles!" : `Your peel — pick ${peelsLeftThisWeek === 1 ? "a tile" : peelsLeftThisWeek + " tiles"}`}</div>`
           : iAmWinner
             ? `<div style="color:var(--ink-faint);font-size:12px">Fully revealed</div>`
             : `<div style="color:var(--ink-faint);font-size:12px">Only ${winnerName} can peel</div>`}
@@ -2194,25 +2236,40 @@ async function renderAward() {
     tilesHtml += `<div class="tile ${cls}" data-tile="${i}"><span class="tnum">${i+1}</span></div>`;
   }
 
-  // log with dollar amounts
+  // log with typed outcomes (uses stored per-peel effective amount when present)
+  const labelFor = (p) => {
+    const type = typeByTile[p.tile_index] || "money";
+    const base = valueByTile[p.tile_index] || 0;
+    if (type === "multiplier") return { txt: "×2 multiplier", cls: "var(--gold)" };
+    // effective is signed per-other-player amount actually owed (may include x2)
+    const eff = (p.effective != null) ? Number(p.effective) : (type === "negative" ? -base : base);
+    if (eff < 0) return { txt: `−$${Math.abs(eff).toFixed(2)} you owe each`, cls: "var(--alert)" };
+    if (type === "jackpot") return { txt: `💰 JACKPOT $${eff.toFixed(2)} each`, cls: "var(--gold)" };
+    return { txt: `$${eff.toFixed(2)} from each`, cls: "var(--live)" };
+  };
   const logRows = (peels || []).slice().sort((a,b) => (a.created_at||"").localeCompare(b.created_at||""))
     .map(p => {
       const nm = PLAYERS.find(x => x.id === p.player_id)?.name || p.player_id;
-      const amt = valueByTile[p.tile_index];
-      const amtTxt = amt != null ? `$${amt.toFixed(2)}` : "—";
+      const l = labelFor(p);
       return `<div class="log-row"><span class="who">${nm}</span>
-        <span class="when">Week ${p.week_number} · <b style="color:var(--live)">${amtTxt}</b> from each</span></div>`;
+        <span class="when">Week ${p.week_number} · <b style="color:${l.cls}">${l.txt}</b></span></div>`;
     }).join("");
 
-  // total revealed so far (sum of peeled tile values, x2 since two owe)
-  const totalPot = (peels || []).reduce((s, p) => s + (valueByTile[p.tile_index] || 0) * 2, 0);
+  // total in play = sum of positive effective amounts x2 (rough headline number)
+  const totalPot = (peels || []).reduce((s, p) => {
+    const type = typeByTile[p.tile_index] || "money";
+    if (type === "multiplier") return s;
+    const eff = (p.effective != null) ? Number(p.effective) : (type === "negative" ? -(valueByTile[p.tile_index]||0) : (valueByTile[p.tile_index]||0));
+    return s + Math.abs(eff) * 2;
+  }, 0);
 
   app.innerHTML = `
     <div class="st-section-title">Weekly Award — peel the cutout</div>
-    <p class="award-intro">Every week, whoever picked the best record peels ${PEELS_PER_WEEK} sections.
-      Each tile hides a dollar amount ($0.25–$10) that <b>both other players owe the peeler</b>.
-      Best record wins; confidence breaks ties. ${peeledTiles.size} of ${TILE_COUNT} revealed ·
-      <b style="color:var(--live)">$${totalPot.toFixed(2)}</b> in play so far. See the ledger on Standings.</p>
+    <p class="award-intro">Each week's best record peels ${PEELS_PER_WEEK} tiles. Tiles hide dollar amounts
+      <b>both others owe you</b> ($0.25–$10), plus surprises: <b style="color:var(--alert)">negative tiles</b>
+      (you owe both), a <b style="color:var(--gold)">$25 jackpot</b>, and <b style="color:var(--gold)">×2 multipliers</b>
+      that double your next peel — good or bad. ${peeledTiles.size} of ${TILE_COUNT} revealed ·
+      <b style="color:var(--live)">$${totalPot.toFixed(2)}</b> in motion. Ledger on Standings.</p>
     ${banner}
     <div class="cutout-wrap">
       <img class="cutout-img" src="${CUTOUT_IMAGE}" alt="cutout"
@@ -2223,27 +2280,47 @@ async function renderAward() {
         and it'll appear here under the tiles.
       </div>
     </div>
-    <div class="award-status">${canPeel ? `Tap ${peelsLeftThisWeek === 1 ? "a covered tile" : "covered tiles"} to peel — the amount is revealed after.` : ""}</div>
+    <div class="award-status">${canPeel ? (multiplierArmed ? "×2 is armed — your next tile doubles. Tap a tile." : `Tap ${peelsLeftThisWeek === 1 ? "a covered tile" : "covered tiles"} to peel.`) : ""}</div>
     ${logRows ? `<div class="award-log"><h3>Peel history</h3>${logRows}</div>` : ""}`;
 
   if (canPeel) {
     app.querySelectorAll(".tile.peelable").forEach(t => {
-      t.onclick = () => peelTile(+t.dataset.tile, pendingWeek, valueByTile);
+      t.onclick = () => peelTile(+t.dataset.tile, pendingWeek, typeByTile, valueByTile, multiplierArmed);
     });
   }
 }
 
-async function peelTile(tileIndex, week, valueByTile) {
-  if (!confirm("Peel this section? Choose deliberately — you get a limited number each week you win.")) return;
+async function peelTile(tileIndex, week, typeByTile, valueByTile, multiplierArmed) {
+  if (!confirm("Peel this section? Could be money, a negative, the jackpot, or a multiplier — choose deliberately.")) return;
+  const type = typeByTile[tileIndex] || "money";
+  const base = valueByTile[tileIndex] || 0;
+  const mult = multiplierArmed ? 2 : 1;
+
+  // resolve effective signed per-other-player amount
+  let effective = 0;
+  if (type === "money" || type === "jackpot") effective = base * mult;
+  else if (type === "negative") effective = -base * mult;
+  else if (type === "multiplier") effective = 0;   // no money; arms next peel
+
   try {
     await sb("peels", {
       method: "POST",
-      body: JSON.stringify({ tile_index: tileIndex, week_number: week, player_id: ME }),
+      body: JSON.stringify({
+        tile_index: tileIndex, week_number: week, player_id: ME, effective,
+      }),
     });
-    const amt = valueByTile?.[tileIndex];
-    if (amt != null) {
-      setTimeout(() => alert(`💰 $${amt.toFixed(2)} tile! Each of the others owes you $${amt.toFixed(2)} — $${(amt*2).toFixed(2)} total.`), 300);
-    }
+    // feedback popup
+    setTimeout(() => {
+      if (type === "multiplier") {
+        alert("✖️2 MULTIPLIER! Your next peel is doubled — good or bad. You get a bonus peel to use it.");
+      } else if (type === "jackpot") {
+        alert(`💰💰 JACKPOT! $${effective.toFixed(2)} from EACH of the others — $${(effective*2).toFixed(2)} total!${mult>1?" (×2 applied!)":""}`);
+      } else if (effective < 0) {
+        alert(`💀 OUCH — negative tile. You owe EACH of the others $${Math.abs(effective).toFixed(2)} — $${(Math.abs(effective)*2).toFixed(2)} total.${mult>1?" (×2 applied — brutal!)":""}`);
+      } else {
+        alert(`💰 $${effective.toFixed(2)} from each — $${(effective*2).toFixed(2)} total.${mult>1?" (×2 applied!)":""}`);
+      }
+    }, 300);
     renderAward();
   } catch (e) {
     alert("Couldn't peel: " + e.message);
