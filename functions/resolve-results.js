@@ -99,6 +99,28 @@ async function resolveWeek(week, results) {
   return { week, changed, eliminated: [...deadEntryIds] };
 }
 
+// Grade every individual pick on each player's ranked list for a week.
+// Loser pool: pick is "correct" if the team LOST. Won or tied = incorrect.
+// Stamps picks.result = 'correct' | 'incorrect' (leaves pending if game not final).
+async function gradePicks(week, results) {
+  if (!Object.keys(results).length) return { graded: 0 };
+  const picks = await sb(`picks?week_number=eq.${week}`);
+  if (!picks || !picks.length) return { graded: 0 };
+  let graded = 0;
+  for (const p of picks) {
+    const outcome = results[p.team];
+    if (!outcome) continue;
+    const newResult = outcome === "lost" ? "correct" : "incorrect";
+    if (p.result !== newResult) {
+      await sb(`picks?id=eq.${p.id}`, {
+        method: "PATCH", body: JSON.stringify({ result: newResult }),
+      });
+      graded++;
+    }
+  }
+  return { graded };
+}
+
 // Resolve the whole field: mark each field entry's elimination week.
 // A field entry dies the first week its picked team won or tied.
 // We store an "out_week" on each field_picks row (null = still alive).
@@ -141,6 +163,7 @@ exports.handler = async () => {
       const results = await fetchWeekResults(w.week_number);
       allWeekResults[w.week_number] = results;
       report.push(await resolveWeek(w.week_number, results));
+      await gradePicks(w.week_number, results);
     }
     // Resolve the field too (only if any week is in play)
     let fieldReport = { fieldChanged: 0 };
