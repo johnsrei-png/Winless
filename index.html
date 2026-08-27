@@ -607,6 +607,20 @@
   .btn-danger { background: var(--alert); color: #fff; }
   .btn-danger:hover { background: #ff6152; }
   .modal .msg { display: block; margin-top: 10px; }
+
+  /* ---- Theme swatches ---- */
+  .theme-swatches { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .theme-swatch {
+    display: flex; align-items: center; gap: 10px; padding: 12px 14px;
+    border: 2px solid; border-radius: 10px; cursor: pointer; transition: transform .1s;
+  }
+  .theme-swatch:hover { transform: translateY(-1px); }
+  .theme-swatch.sel { outline: 2px solid var(--alert); outline-offset: 1px; }
+  .theme-swatch .sw-accent { width: 16px; height: 16px; border-radius: 50%; flex-shrink: 0; }
+  .theme-swatch .sw-name {
+    font-family: 'Barlow Semi Condensed', sans-serif; font-weight: 600; font-size: 13px;
+    letter-spacing: 0.04em;
+  }
 </style>
 </head>
 <body>
@@ -684,6 +698,77 @@ const sbUpsert = (table, rows, onConflict) =>
 let ME = localStorage.getItem("winless_player") || null;
 let PLAYERS = [];
 let BOARD_EDIT_MODE = false;
+let MY_PREFS = null;   // { theme, accent, bg, font } for the signed-in player
+
+// Preset themes. Each sets the core CSS vars; accent/bg/font can be overridden per player.
+const THEMES = {
+  "stadium": {
+    name: "Stadium Night",
+    vars: { "--bg":"#0b0e13","--panel":"#131820","--panel-2":"#1a2029","--line":"#262e3a",
+      "--ink":"#eef2f7","--ink-dim":"#8b97a8","--ink-faint":"#5a6472",
+      "--alert":"#ff4d3d","--alert-dim":"#b8352a","--live":"#35d07f","--gold":"#f5c451" },
+  },
+  "daylight": {
+    name: "Daylight",
+    vars: { "--bg":"#f4f6fa","--panel":"#ffffff","--panel-2":"#eef1f6","--line":"#d9dee7",
+      "--ink":"#111722","--ink-dim":"#55606f","--ink-faint":"#9aa4b2",
+      "--alert":"#e63329","--alert-dim":"#b8271f","--live":"#1a9d5c","--gold":"#c99a2e" },
+  },
+  "gridiron": {
+    name: "Gridiron Green",
+    vars: { "--bg":"#0a140d","--panel":"#0f1e14","--panel-2":"#15291b","--line":"#1f3a29",
+      "--ink":"#eaf5ee","--ink-dim":"#8bab97","--ink-faint":"#567564",
+      "--alert":"#4ade80","--alert-dim":"#2f9d5b","--live":"#a3e635","--gold":"#f5c451" },
+  },
+  "blitz": {
+    name: "Blitz Purple",
+    vars: { "--bg":"#0e0b18","--panel":"#161129","--panel-2":"#1e1838","--line":"#2c2450",
+      "--ink":"#f0edfa","--ink-dim":"#a294c9","--ink-faint":"#6b5f8f",
+      "--alert":"#a855f7","--alert-dim":"#7e3ec2","--live":"#34d399","--gold":"#fbbf24" },
+  },
+  "ice": {
+    name: "Ice Blue",
+    vars: { "--bg":"#0a1016","--panel":"#101a24","--panel-2":"#16242f","--line":"#213443",
+      "--ink":"#e8f2fa","--ink-dim":"#84a3ba","--ink-faint":"#4f6b7e",
+      "--alert":"#38bdf8","--alert-dim":"#2b90bf","--live":"#34d399","--gold":"#fbbf24" },
+  },
+};
+
+const FONTS = {
+  "inter": { name: "Inter (default)", stack: "'Inter', system-ui, sans-serif" },
+  "system": { name: "System", stack: "system-ui, -apple-system, sans-serif" },
+  "mono": { name: "Monospace", stack: "ui-monospace, 'SF Mono', Menlo, monospace" },
+  "serif": { name: "Serif", stack: "Georgia, 'Times New Roman', serif" },
+  "rounded": { name: "Rounded", stack: "'Trebuchet MS', 'Segoe UI', sans-serif" },
+};
+
+// Apply a prefs object to the page. prefs = { theme, accent, bg, font }
+function applyTheme(prefs) {
+  const root = document.documentElement;
+  const base = THEMES[prefs?.theme] || THEMES["stadium"];
+  // set all base vars first
+  Object.entries(base.vars).forEach(([k, v]) => root.style.setProperty(k, v));
+  // custom overrides
+  if (prefs?.accent) {
+    root.style.setProperty("--alert", prefs.accent);
+    root.style.setProperty("--alert-dim", shade(prefs.accent, -0.25));
+  }
+  if (prefs?.bg) root.style.setProperty("--bg", prefs.bg);
+  if (prefs?.font && FONTS[prefs.font]) {
+    root.style.setProperty("--body-font", FONTS[prefs.font].stack);
+    document.body.style.fontFamily = FONTS[prefs.font].stack;
+  }
+}
+
+// darken/lighten a hex color by amount (-1..1)
+function shade(hex, amt) {
+  const h = hex.replace("#", "");
+  if (h.length !== 6) return hex;
+  let r = parseInt(h.slice(0,2),16), g = parseInt(h.slice(2,4),16), b = parseInt(h.slice(4,6),16);
+  const f = amt < 0 ? 0 : 255, p = Math.abs(amt);
+  r = Math.round((f - r) * p + r); g = Math.round((f - g) * p + g); b = Math.round((f - b) * p + b);
+  return "#" + [r,g,b].map(x => x.toString(16).padStart(2,"0")).join("");
+}
 
 const app = document.getElementById("app");
 const whoami = document.getElementById("whoami");
@@ -692,12 +777,13 @@ function renderWhoami() {
   if (ME && PLAYERS.length) {
     const p = PLAYERS.find(x => x.id === ME);
     whoami.innerHTML = `Signed in as <b>${p ? p.name : ME}</b><br>
-      <a id="switch">switch player</a> · <a id="commish">commish</a>`;
+      <a id="switch">switch player</a> · <a id="themelink">theme</a> · <a id="commish">commish</a>`;
     document.getElementById("switch").onclick = () => {
       localStorage.removeItem("winless_player");
       ME = null;
       boot();
     };
+    document.getElementById("themelink").onclick = openThemeEditor;
     document.getElementById("commish").onclick = openCommish;
   } else {
     whoami.innerHTML = "";
@@ -1445,6 +1531,116 @@ async function renderStandings() {
 }
 
 // ============================================================
+//  THEME EDITOR — per-player, saved to Supabase players.prefs
+// ============================================================
+function openThemeEditor() {
+  const cur = MY_PREFS || { theme: "stadium", accent: "", bg: "", font: "inter" };
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+
+  const presetBtns = Object.entries(THEMES).map(([id, t]) => `
+    <button class="theme-swatch ${cur.theme === id ? "sel" : ""}" data-theme="${id}"
+      style="background:${t.vars["--bg"]};border-color:${t.vars["--line"]}">
+      <span class="sw-accent" style="background:${t.vars["--alert"]}"></span>
+      <span class="sw-name" style="color:${t.vars["--ink"]}">${t.name}</span>
+    </button>`).join("");
+
+  const fontOpts = Object.entries(FONTS).map(([id, f]) =>
+    `<option value="${id}" ${cur.font === id ? "selected" : ""}>${f.name}</option>`).join("");
+
+  overlay.innerHTML = `
+    <div class="modal">
+      <h2>Your Theme</h2>
+      <p>Personalize Winless. Saved to your profile, so it follows you on any device.</p>
+
+      <div class="modal-section" style="border-top:none;padding-top:0;margin-top:0">
+        <h3>Preset</h3>
+        <div class="theme-swatches">${presetBtns}</div>
+      </div>
+
+      <div class="modal-section">
+        <h3>Custom accent color</h3>
+        <p style="margin-bottom:10px">Overrides the preset's highlight color. Clear to use the preset's.</p>
+        <div style="display:flex;gap:10px;align-items:center">
+          <input type="color" id="accentpick" value="${cur.accent || THEMES[cur.theme]?.vars["--alert"] || "#ff4d3d"}"
+            style="width:52px;height:38px;padding:2px;cursor:pointer" />
+          <button class="btn btn-ghost" id="clearaccent">Use preset color</button>
+        </div>
+      </div>
+
+      <div class="modal-section">
+        <h3>Custom background</h3>
+        <p style="margin-bottom:10px">Overrides the preset's page background.</p>
+        <div style="display:flex;gap:10px;align-items:center">
+          <input type="color" id="bgpick" value="${cur.bg || THEMES[cur.theme]?.vars["--bg"] || "#0b0e13"}"
+            style="width:52px;height:38px;padding:2px;cursor:pointer" />
+          <button class="btn btn-ghost" id="clearbg">Use preset background</button>
+        </div>
+      </div>
+
+      <div class="modal-section">
+        <h3>Font</h3>
+        <select id="fontpick" class="wksel" style="width:100%">${fontOpts}</select>
+      </div>
+
+      <div class="modal-actions" style="margin-top:20px">
+        <button class="btn btn-ghost" id="themecancel">Cancel</button>
+        <button class="btn btn-primary" id="themesave">Save theme</button>
+      </div>
+      <span class="msg" id="thememsg"></span>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  // working copy; live-preview as they change things
+  let draft = { ...cur };
+  const preview = () => applyTheme(draft);
+
+  overlay.querySelectorAll(".theme-swatch").forEach(b => {
+    b.onclick = () => {
+      draft.theme = b.dataset.theme;
+      overlay.querySelectorAll(".theme-swatch").forEach(x => x.classList.toggle("sel", x === b));
+      // reset custom pickers to the new preset's values for clarity
+      overlay.querySelector("#accentpick").value = THEMES[draft.theme].vars["--alert"];
+      overlay.querySelector("#bgpick").value = THEMES[draft.theme].vars["--bg"];
+      draft.accent = ""; draft.bg = "";
+      preview();
+    };
+  });
+  overlay.querySelector("#accentpick").oninput = (e) => { draft.accent = e.target.value; preview(); };
+  overlay.querySelector("#bgpick").oninput = (e) => { draft.bg = e.target.value; preview(); };
+  overlay.querySelector("#clearaccent").onclick = () => {
+    draft.accent = ""; overlay.querySelector("#accentpick").value = THEMES[draft.theme].vars["--alert"]; preview();
+  };
+  overlay.querySelector("#clearbg").onclick = () => {
+    draft.bg = ""; overlay.querySelector("#bgpick").value = THEMES[draft.theme].vars["--bg"]; preview();
+  };
+  overlay.querySelector("#fontpick").onchange = (e) => { draft.font = e.target.value; preview(); };
+
+  const revert = () => applyTheme(MY_PREFS);  // restore saved on cancel
+  overlay.querySelector("#themecancel").onclick = () => { revert(); overlay.remove(); };
+  overlay.onclick = (e) => { if (e.target === overlay) { revert(); overlay.remove(); } };
+
+  overlay.querySelector("#themesave").onclick = async () => {
+    const msg = overlay.querySelector("#thememsg");
+    const btn = overlay.querySelector("#themesave");
+    btn.disabled = true; msg.className = "msg"; msg.textContent = "Saving…";
+    try {
+      await sb(`players?id=eq.${ME}`, {
+        method: "PATCH", body: JSON.stringify({ prefs: draft }),
+      });
+      MY_PREFS = draft;
+      // update local PLAYERS cache too
+      const me = PLAYERS.find(p => p.id === ME); if (me) me.prefs = draft;
+      msg.className = "msg ok"; msg.textContent = "Saved ✓";
+      setTimeout(() => overlay.remove(), 700);
+    } catch (e) {
+      btn.disabled = false;
+      msg.className = "msg err"; msg.textContent = "Save failed: " + e.message;
+    }
+  };
+}
+
+// ============================================================
 //  COMMISSIONER — Reid is commish by default; password is a fallback
 // ============================================================
 const COMMISH_PASSWORD = "gopackgo";
@@ -1647,6 +1843,10 @@ async function boot() {
     document.getElementById("tabs").style.display = "none";
     renderGate();
   } else {
+    // load this player's saved theme prefs and apply
+    const me = PLAYERS.find(p => p.id === ME);
+    MY_PREFS = me && me.prefs ? (typeof me.prefs === "string" ? JSON.parse(me.prefs) : me.prefs) : null;
+    applyTheme(MY_PREFS);
     document.getElementById("tabs").style.display = "flex";
     wireTabs();
     routeTab();
