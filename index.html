@@ -575,6 +575,38 @@
   .presult.pending { background: var(--panel-2); color: var(--ink-faint); }
   .presult.survived { background: rgba(53,208,127,0.14); color: var(--live); }
   .presult.eliminated { background: rgba(255,77,61,0.14); color: var(--alert); }
+
+  /* ---- Commissioner modal ---- */
+  .modal-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(3px);
+    display: flex; align-items: center; justify-content: center; z-index: 100; padding: 20px;
+  }
+  .modal {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 16px;
+    padding: 26px; max-width: 460px; width: 100%;
+  }
+  .modal h2 {
+    font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-size: 26px;
+    letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 6px;
+  }
+  .modal p { font-size: 13px; color: var(--ink-dim); line-height: 1.55; margin-bottom: 16px; }
+  .modal input {
+    width: 100%; background: var(--panel-2); border: 1px solid var(--line); color: var(--ink);
+    font-family: 'Inter', sans-serif; font-size: 15px; padding: 11px 12px; border-radius: 8px;
+    margin-bottom: 16px;
+  }
+  .modal input:focus { outline: none; border-color: var(--alert); }
+  .modal-section {
+    border-top: 1px solid var(--line); padding-top: 18px; margin-top: 18px;
+  }
+  .modal-section h3 {
+    font-family: 'Barlow Semi Condensed', sans-serif; font-size: 12px; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--ink-dim); font-weight: 600; margin-bottom: 6px;
+  }
+  .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 8px; }
+  .btn-danger { background: var(--alert); color: #fff; }
+  .btn-danger:hover { background: #ff6152; }
+  .modal .msg { display: block; margin-top: 10px; }
 </style>
 </head>
 <body>
@@ -659,12 +691,14 @@ const whoami = document.getElementById("whoami");
 function renderWhoami() {
   if (ME && PLAYERS.length) {
     const p = PLAYERS.find(x => x.id === ME);
-    whoami.innerHTML = `Signed in as <b>${p ? p.name : ME}</b><br><a id="switch">switch player</a>`;
+    whoami.innerHTML = `Signed in as <b>${p ? p.name : ME}</b><br>
+      <a id="switch">switch player</a> · <a id="commish">commish</a>`;
     document.getElementById("switch").onclick = () => {
       localStorage.removeItem("winless_player");
       ME = null;
       boot();
     };
+    document.getElementById("commish").onclick = openCommish;
   } else {
     whoami.innerHTML = "";
   }
@@ -1408,6 +1442,87 @@ async function renderStandings() {
       <div class="st-section-title">Week by week</div>
       <div class="wk-grid"><table>${gridHead}${gridBody}</table></div>
     </div>`;
+}
+
+// ============================================================
+//  COMMISSIONER — password-gated tools (season reset)
+// ============================================================
+const COMMISH_PASSWORD = "gopackgo";
+
+function openCommish() {
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal">
+      <h2>Commissioner</h2>
+      <p>Enter the commissioner password to access season tools.</p>
+      <input type="password" id="commishpw" placeholder="Password" autocomplete="off" />
+      <div class="modal-actions">
+        <button class="btn btn-ghost" id="commishcancel">Cancel</button>
+        <button class="btn btn-primary" id="commishenter">Enter</button>
+      </div>
+      <span class="msg" id="commishmsg"></span>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  const close = () => overlay.remove();
+  overlay.onclick = (e) => { if (e.target === overlay) close(); };
+  overlay.querySelector("#commishcancel").onclick = close;
+  const pw = overlay.querySelector("#commishpw");
+  pw.focus();
+  const tryEnter = () => {
+    if (pw.value === COMMISH_PASSWORD) commishTools(overlay);
+    else {
+      const m = overlay.querySelector("#commishmsg");
+      m.className = "msg err"; m.textContent = "Wrong password.";
+    }
+  };
+  overlay.querySelector("#commishenter").onclick = tryEnter;
+  pw.onkeydown = (e) => { if (e.key === "Enter") tryEnter(); };
+}
+
+function commishTools(overlay) {
+  overlay.querySelector(".modal").innerHTML = `
+    <h2>Commissioner</h2>
+    <p>Season tools. Handle with care.</p>
+
+    <div class="modal-section">
+      <h3>Reset season</h3>
+      <p>Wipes all picks, submissions, assignments, field imports, results, and weeks.
+        Your players and the six entries stay (entries are set back to alive). Use this to
+        clear test data or start a new season. <b>This can't be undone.</b></p>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" id="closetools">Close</button>
+        <button class="btn btn-danger" id="resetseason">Reset season</button>
+      </div>
+      <span class="msg" id="resetmsg"></span>
+    </div>`;
+
+  overlay.querySelector("#closetools").onclick = () => overlay.remove();
+  overlay.querySelector("#resetseason").onclick = async () => {
+    if (!confirm("Really wipe the whole season? Picks, weeks, assignments, field data, and results will be deleted. This cannot be undone.")) return;
+    const btn = overlay.querySelector("#resetseason");
+    const msg = overlay.querySelector("#resetmsg");
+    btn.disabled = true; msg.className = "msg"; msg.textContent = "Resetting…";
+    try {
+      // delete gameplay data (filters match everything; PostgREST needs a filter to delete)
+      await sb(`assignments?id=gte.0`, { method: "DELETE" });
+      await sb(`picks?id=gte.0`, { method: "DELETE" });
+      await sb(`submissions?week_number=gte.0`, { method: "DELETE" });
+      await sb(`field_picks?id=gte.0`, { method: "DELETE" });
+      await sb(`weeks?id=gte.0`, { method: "DELETE" });
+      // revive entries
+      await sb(`entries?id=gte.0`, {
+        method: "PATCH", body: JSON.stringify({ status: "alive", died_week: null }),
+      });
+      msg.className = "msg ok"; msg.textContent = "Season reset. Reloading…";
+      BOARD_EDIT_MODE = false;
+      setTimeout(() => { overlay.remove(); CURRENT_TAB = "week"; boot(); }, 900);
+    } catch (e) {
+      btn.disabled = false;
+      msg.className = "msg err"; msg.textContent = "Reset failed: " + e.message;
+    }
+  };
 }
 
 // ---- Boot ----
