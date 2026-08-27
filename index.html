@@ -911,6 +911,7 @@ function renderGate() {
 // ---- Pick submission screen ----
 async function renderWeek() {
   renderWhoami();
+  window._pickScreenActive = false;   // set true only when the pick grid renders
 
   // current open week = highest week_number with status 'open', else highest overall
   const weeks = await sbGet("weeks?order=week_number.desc&limit=1");
@@ -931,6 +932,7 @@ async function renderWeek() {
   const submittedBy = new Set(subs.filter(s => s.submitted).map(s => s.player_id));
   const iSubmitted = submittedBy.has(ME);
   const allIn = PLAYERS.length > 0 && PLAYERS.every(p => submittedBy.has(p.id));
+  window._iAlreadySubmitted = iSubmitted;
 
   // week stat bar + tracker
   const trackerHtml = PLAYERS.map(p => {
@@ -957,6 +959,7 @@ async function renderWeek() {
   }
 
   // build the ranked slots, pre-filled if I already have picks
+  window._pickScreenActive = true;
   const existing = {};
   myPicks.forEach(p => { existing[p.rank] = p.team; });
 
@@ -2223,6 +2226,53 @@ function routeTab() {
   else if (CURRENT_TAB === "award") renderAward();
   else renderWeek();
 }
+
+// ============================================================
+//  Live-ish refresh: re-render current tab on focus + light poll,
+//  but never while the user is mid-edit (typing / placing board).
+// ============================================================
+function userIsBusy() {
+  // don't refresh while editing the board, an input/select is focused,
+  // an entry is being renamed, or a modal is open
+  if (BOARD_EDIT_MODE) return true;
+  const ae = document.activeElement;
+  if (ae && (ae.tagName === "INPUT" || ae.tagName === "SELECT" || ae.tagName === "TEXTAREA")) return true;
+  if (document.querySelector(".modal-overlay")) return true;
+  if (document.querySelector("input.pid-edit")) return true;
+  // on the pick screen, don't clobber unsaved in-progress selections.
+  // Safe to refresh if the player has already submitted (screen just re-shows saved picks).
+  if (CURRENT_TAB === "week" && window._pickScreenActive && !window._iAlreadySubmitted) {
+    const picksSelects = document.querySelectorAll("select.team");
+    if (Array.from(picksSelects).some(s => s.value)) return true;
+  }
+  return false;
+}
+
+let _refreshing = false;
+async function safeRefresh() {
+  if (_refreshing || userIsBusy()) return;
+  if (document.hidden) return;
+  if (!ME) return;                        // not signed in
+  _refreshing = true;
+  try {
+    // re-render the current tab WITHOUT the "Loading…" flash
+    if (CURRENT_TAB === "field") await renderField();
+    else if (CURRENT_TAB === "standings") await renderStandings();
+    else if (CURRENT_TAB === "award") await renderAward();
+    else await renderWeek();
+  } catch (e) {
+    // silent — a failed background refresh shouldn't disrupt anything
+  } finally {
+    _refreshing = false;
+  }
+}
+
+// refresh when the tab regains focus (someone picks their phone back up)
+window.addEventListener("visibilitychange", () => { if (!document.hidden) safeRefresh(); });
+window.addEventListener("focus", safeRefresh);
+
+// gentle poll every 20s while the tab is visible
+setInterval(() => { if (!document.hidden) safeRefresh(); }, 20000);
 
 boot();
 </script>
