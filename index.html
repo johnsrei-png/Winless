@@ -655,6 +655,24 @@
   .log-row:last-child { border-bottom: none; }
   .log-row .who { font-weight: 600; }
   .log-row .when { color: var(--ink-faint); }
+
+  /* ---- Money settlement ---- */
+  .settle-box {
+    margin-top: 14px; background: var(--panel); border: 1px solid var(--line);
+    border-left: 3px solid var(--gold); border-radius: 12px; overflow: hidden;
+  }
+  .settle-box h3 {
+    font-family: 'Barlow Semi Condensed', sans-serif; font-size: 12px; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--ink-dim); font-weight: 600; padding: 13px 16px; border-bottom: 1px solid var(--line);
+  }
+  .settle-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 12px 16px; border-bottom: 1px solid var(--line); font-size: 14px;
+  }
+  .settle-row:last-child { border-bottom: none; }
+  .settle-amt {
+    font-family: 'Barlow Semi Condensed', sans-serif; font-weight: 700; font-size: 18px; color: var(--gold);
+  }
   .placed-card .pteam {
     flex: 1; font-family: 'Barlow Semi Condensed', sans-serif; font-weight: 700;
     font-size: 22px; letter-spacing: 0.02em;
@@ -1618,6 +1636,67 @@ async function renderStandings() {
 
   const anyPending = ranked.some(r => r.pending > 0);
 
+  // ===== Money ledger from peels =====
+  let peels = [], tileValues = [];
+  try {
+    [peels, tileValues] = await Promise.all([
+      sbGet(`peels?order=created_at.asc`).catch(() => []),
+      sbGet(`tile_values?order=tile_index.asc`).catch(() => []),
+    ]);
+  } catch (e) { peels = []; tileValues = []; }
+  const valueByTile = {}; (tileValues || []).forEach(t => valueByTile[t.tile_index] = Number(t.amount));
+
+  const earned = {}; PLAYERS.forEach(p => earned[p.id] = 0);
+  (peels || []).forEach(p => {
+    const amt = valueByTile[p.tile_index] || 0;
+    if (earned[p.player_id] != null) earned[p.player_id] += amt;
+  });
+
+  const ids = PLAYERS.map(p => p.id);
+  const owes = {}; ids.forEach(a => { owes[a] = {}; ids.forEach(b => { if (a!==b) owes[a][b]=0; }); });
+  (peels || []).forEach(p => {
+    const amt = valueByTile[p.tile_index] || 0;
+    const peeler = p.player_id;
+    ids.forEach(other => { if (other !== peeler && owes[other]) owes[other][peeler] += amt; });
+  });
+  const settlements = [];
+  for (let i = 0; i < ids.length; i++) {
+    for (let j = i+1; j < ids.length; j++) {
+      const a = ids[i], b = ids[j];
+      const net = (owes[a][b] || 0) - (owes[b][a] || 0);
+      if (Math.abs(net) > 0.001) {
+        if (net > 0) settlements.push({ from: a, to: b, amount: net });
+        else settlements.push({ from: b, to: a, amount: -net });
+      }
+    }
+  }
+  const nameOf = id => PLAYERS.find(p => p.id === id)?.name || id;
+  const anyMoney = (peels || []).length > 0 && (tileValues || []).length > 0;
+  const ledgerHtml = anyMoney ? `
+    <div class="st-weekly">
+      <div class="st-section-title">Money — the peel ledger</div>
+      <div class="standings-table">
+        <div class="st-head" style="grid-template-columns:1fr 120px">
+          <div>Player</div><div>Collected</div>
+        </div>
+        ${PLAYERS.slice().sort((a,b)=>earned[b.id]-earned[a.id]).map(p => `
+          <div class="st-row" style="grid-template-columns:1fr 120px">
+            <div class="st-name">${p.name}</div>
+            <div class="st-val st-pct">$${(earned[p.id]*2).toFixed(2)}</div>
+          </div>`).join("")}
+      </div>
+      <p class="field-note">"Collected" is the total owed to each player across both others.
+        Each peeled tile is owed by <b>both</b> other players, so a $5 tile = $10 collected.</p>
+      <div class="settle-box">
+        <h3>Who owes who</h3>
+        ${settlements.length
+          ? settlements.map(s => `<div class="settle-row">
+              <span><b>${nameOf(s.from)}</b> owes <b>${nameOf(s.to)}</b></span>
+              <span class="settle-amt">$${s.amount.toFixed(2)}</span></div>`).join("")
+          : `<div class="settle-row"><span style="color:var(--ink-faint)">All square so far.</span></div>`}
+      </div>
+    </div>` : "";
+
   app.innerHTML = `
     <div class="st-section-title">Season Standings — pick accuracy</div>
     <div class="standings-table">
@@ -1638,7 +1717,8 @@ async function renderStandings() {
     <div class="st-weekly">
       <div class="st-section-title">Week by week</div>
       <div class="wk-grid"><table>${gridHead}${gridBody}</table></div>
-    </div>`;
+    </div>
+    ${ledgerHtml}`;
 }
 
 // ============================================================
@@ -1918,6 +1998,7 @@ async function commishTools(overlay) {
       await sb(`submissions?week_number=gte.0`, { method: "DELETE" });
       await sb(`field_picks?id=gte.0`, { method: "DELETE" });
       await sb(`peels?id=gte.0`, { method: "DELETE" });
+      await sb(`tile_values?id=gte.0`, { method: "DELETE" });
       await sb(`weeks?id=gte.0`, { method: "DELETE" });
       await sb(`entries?id=gte.0`, {
         method: "PATCH", body: JSON.stringify({ status: "alive", died_week: null }),
@@ -1992,6 +2073,33 @@ const CUTOUT_IMAGE = "cutout.jpg";   // commit this file next to index.html
 const TILE_COUNT = 100;              // 10 x 10
 const PEELS_PER_WEEK = 4;            // winner peels this many per week
 
+// Dollar value distribution across the 100 tiles. Each losing player owes the
+// peeler this amount (so the peeler collects 2x the tile value total).
+// Weighted: lots of small, rare big.
+const TILE_VALUE_PLAN = [
+  { amount: 0.25, count: 30 },
+  { amount: 0.50, count: 20 },
+  { amount: 1.00, count: 20 },
+  { amount: 2.00, count: 13 },
+  { amount: 3.00, count: 7 },
+  { amount: 5.00, count: 7 },
+  { amount: 10.00, count: 3 },
+];  // sums to 100
+
+// Build a shuffled array of 100 amounts and assign to tile indices 0..99.
+function generateTileValues() {
+  const pool = [];
+  TILE_VALUE_PLAN.forEach(({ amount, count }) => {
+    for (let i = 0; i < count; i++) pool.push(amount);
+  });
+  // Fisher-Yates shuffle
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  return pool.map((amount, tile_index) => ({ tile_index, amount }));
+}
+
 // Compute the winner of a given week from graded picks.
 // Best record (correct) that week; ties broken by confidence points.
 function weeklyWinner(picks, week, reqByWeek) {
@@ -2019,6 +2127,18 @@ async function renderAward() {
     sbGet(`peels?order=tile_index.asc`).catch(() => []),
   ]);
   const reqByWeek = {}; (weeks || []).forEach(w => reqByWeek[w.week_number] = w.picks_required);
+
+  // load tile dollar values; generate + persist once if the table is empty
+  let tileValues = [];
+  try {
+    tileValues = await sbGet(`tile_values?order=tile_index.asc`) || [];
+    if (!tileValues.length) {
+      const gen = generateTileValues();
+      await sb("tile_values", { method: "POST", body: JSON.stringify(gen) });
+      tileValues = gen;
+    }
+  } catch (e) { tileValues = []; }
+  const valueByTile = {}; tileValues.forEach(t => valueByTile[t.tile_index] = Number(t.amount));
 
   // which weeks are fully graded (have at least one non-pending pick)?
   const gradedWeeks = [...new Set((picks || [])
@@ -2074,19 +2194,25 @@ async function renderAward() {
     tilesHtml += `<div class="tile ${cls}" data-tile="${i}"><span class="tnum">${i+1}</span></div>`;
   }
 
-  // log
+  // log with dollar amounts
   const logRows = (peels || []).slice().sort((a,b) => (a.created_at||"").localeCompare(b.created_at||""))
     .map(p => {
       const nm = PLAYERS.find(x => x.id === p.player_id)?.name || p.player_id;
+      const amt = valueByTile[p.tile_index];
+      const amtTxt = amt != null ? `$${amt.toFixed(2)}` : "—";
       return `<div class="log-row"><span class="who">${nm}</span>
-        <span class="when">Week ${p.week_number} · tile ${p.tile_index + 1}</span></div>`;
+        <span class="when">Week ${p.week_number} · <b style="color:var(--live)">${amtTxt}</b> from each</span></div>`;
     }).join("");
+
+  // total revealed so far (sum of peeled tile values, x2 since two owe)
+  const totalPot = (peels || []).reduce((s, p) => s + (valueByTile[p.tile_index] || 0) * 2, 0);
 
   app.innerHTML = `
     <div class="st-section-title">Weekly Award — peel the cutout</div>
-    <p class="award-intro">Every week, whoever picked the best record earns the right to peel ${PEELS_PER_WEEK} sections
-      off the cutout. Best record wins; confidence points break ties. <b>Only that week's winner can peel.</b>
-      ${peeledTiles.size} of ${TILE_COUNT} sections revealed.</p>
+    <p class="award-intro">Every week, whoever picked the best record peels ${PEELS_PER_WEEK} sections.
+      Each tile hides a dollar amount ($0.25–$10) that <b>both other players owe the peeler</b>.
+      Best record wins; confidence breaks ties. ${peeledTiles.size} of ${TILE_COUNT} revealed ·
+      <b style="color:var(--live)">$${totalPot.toFixed(2)}</b> in play so far. See the ledger on Standings.</p>
     ${banner}
     <div class="cutout-wrap">
       <img class="cutout-img" src="${CUTOUT_IMAGE}" alt="cutout"
@@ -2097,23 +2223,27 @@ async function renderAward() {
         and it'll appear here under the tiles.
       </div>
     </div>
-    <div class="award-status">${canPeel ? `Tap ${peelsLeftThisWeek === 1 ? "a covered tile" : "covered tiles"} to peel.` : ""}</div>
+    <div class="award-status">${canPeel ? `Tap ${peelsLeftThisWeek === 1 ? "a covered tile" : "covered tiles"} to peel — the amount is revealed after.` : ""}</div>
     ${logRows ? `<div class="award-log"><h3>Peel history</h3>${logRows}</div>` : ""}`;
 
   if (canPeel) {
     app.querySelectorAll(".tile.peelable").forEach(t => {
-      t.onclick = () => peelTile(+t.dataset.tile, pendingWeek);
+      t.onclick = () => peelTile(+t.dataset.tile, pendingWeek, valueByTile);
     });
   }
 }
 
-async function peelTile(tileIndex, week) {
+async function peelTile(tileIndex, week, valueByTile) {
   if (!confirm("Peel this section? Choose deliberately — you get a limited number each week you win.")) return;
   try {
     await sb("peels", {
       method: "POST",
       body: JSON.stringify({ tile_index: tileIndex, week_number: week, player_id: ME }),
     });
+    const amt = valueByTile?.[tileIndex];
+    if (amt != null) {
+      setTimeout(() => alert(`💰 $${amt.toFixed(2)} tile! Each of the others owes you $${amt.toFixed(2)} — $${(amt*2).toFixed(2)} total.`), 300);
+    }
     renderAward();
   } catch (e) {
     alert("Couldn't peel: " + e.message);
