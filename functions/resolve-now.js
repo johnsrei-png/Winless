@@ -23,7 +23,11 @@ async function sb(path, opts = {}) {
       ...(opts.headers || {}),
     },
   });
-  if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  if (!res.ok) {
+    const body = await res.text();
+    console.error(`Supabase error on path "${path}": ${res.status} ${body}`);
+    throw new Error(`${res.status}: ${body}`);
+  }
   const txt = await res.text();
   return txt ? JSON.parse(txt) : null;
 }
