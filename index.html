@@ -623,25 +623,29 @@
     aspect-ratio: 4 / 5; border-radius: 14px; overflow: hidden;
     border: 1px solid var(--line); background: var(--panel-2);
   }
-  .cutout-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .cutout-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
   .cutout-missing {
     position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
     text-align: center; color: var(--ink-faint); font-size: 13px; padding: 30px; line-height: 1.6;
+    pointer-events: none;
   }
   .cutout-grid {
-    position: absolute; inset: 0; display: grid;
+    position: absolute; inset: 0; display: grid; z-index: 3;
     grid-template-columns: repeat(10, 1fr); grid-template-rows: repeat(10, 1fr);
   }
   .tile {
     background: var(--panel); border: 0.5px solid var(--bg);
     display: flex; align-items: center; justify-content: center;
     transition: opacity .4s ease, transform .3s ease;
-    position: relative;
+    position: relative; -webkit-tap-highlight-color: transparent;
   }
   .tile.peeled { opacity: 0; pointer-events: none; transform: scale(1.02); }
-  .tile.peelable { cursor: pointer; }
-  .tile.peelable:hover { background: var(--panel-2); outline: 1px solid var(--gold); outline-offset: -1px; z-index: 2; }
+  .tile.peelable { cursor: pointer; touch-action: manipulation; }
+  .tile.peelable:hover,
+  .tile.peelable:active { background: var(--panel-2); outline: 2px solid var(--gold); outline-offset: -2px; z-index: 4; }
   .tile .tnum { display: none; }
+  /* when peelable, subtly tint the whole grid gold so it's obvious tiles are tappable (mobile has no hover) */
+  .cutout-grid.armed .tile:not(.peeled) { box-shadow: inset 0 0 0 0.5px var(--gold); }
 
   .award-status { text-align: center; font-size: 13px; color: var(--ink-dim); margin-top: 14px; }
   .award-log {
@@ -2284,8 +2288,14 @@ async function renderAward() {
     ${logRows ? `<div class="award-log"><h3>Peel history</h3>${logRows}</div>` : ""}`;
 
   if (canPeel) {
+    const grid = app.querySelector(".cutout-grid");
+    if (grid) grid.classList.add("armed");
     app.querySelectorAll(".tile.peelable").forEach(t => {
-      t.onclick = () => peelTile(+t.dataset.tile, pendingWeek, typeByTile, valueByTile, multiplierArmed);
+      const handler = (e) => {
+        e.preventDefault();
+        peelTile(+t.dataset.tile, pendingWeek, typeByTile, valueByTile, multiplierArmed);
+      };
+      t.addEventListener("click", handler);
     });
   }
 }
