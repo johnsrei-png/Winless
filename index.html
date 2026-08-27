@@ -630,24 +630,18 @@
   }
   .cutout-grid {
     position: absolute; inset: 0; display: grid;
-    grid-template-columns: repeat(4, 1fr); grid-template-rows: repeat(5, 1fr);
+    grid-template-columns: repeat(10, 1fr); grid-template-rows: repeat(10, 1fr);
   }
   .tile {
-    background: var(--panel); border: 1px solid var(--bg);
+    background: var(--panel); border: 0.5px solid var(--bg);
     display: flex; align-items: center; justify-content: center;
-    transition: opacity .5s ease, transform .4s ease;
+    transition: opacity .4s ease, transform .3s ease;
     position: relative;
   }
-  .tile.peeled { opacity: 0; pointer-events: none; transform: scale(1.04); }
+  .tile.peeled { opacity: 0; pointer-events: none; transform: scale(1.02); }
   .tile.peelable { cursor: pointer; }
-  .tile.peelable:hover { background: var(--panel-2); }
-  .tile.peelable::after {
-    content: "PEEL"; font-family: 'Barlow Semi Condensed', sans-serif; font-weight: 700;
-    font-size: 11px; letter-spacing: 0.14em; color: var(--gold); opacity: 0;
-    transition: opacity .15s;
-  }
-  .tile.peelable:hover::after { opacity: 1; }
-  .tile .tnum { font-family: 'Barlow Semi Condensed', sans-serif; font-size: 11px; color: var(--ink-faint); position: absolute; top: 4px; left: 6px; }
+  .tile.peelable:hover { background: var(--panel-2); outline: 1px solid var(--gold); outline-offset: -1px; z-index: 2; }
+  .tile .tnum { display: none; }
 
   .award-status { text-align: center; font-size: 13px; color: var(--ink-dim); margin-top: 14px; }
   .award-log {
@@ -1862,7 +1856,7 @@ async function commishTools(overlay) {
 
     <div class="modal-section">
       <h3>Reset season</h3>
-      <p>Wipes all picks, submissions, assignments, field imports, results, and weeks.
+      <p>Wipes all picks, submissions, assignments, field imports, results, weeks, and peels.
         Players and the six entries stay (entries reset to alive). <b>Can't be undone.</b></p>
       <div class="modal-actions">
         <button class="btn btn-ghost" id="closetools">Close</button>
@@ -1923,6 +1917,7 @@ async function commishTools(overlay) {
       await sb(`picks?id=gte.0`, { method: "DELETE" });
       await sb(`submissions?week_number=gte.0`, { method: "DELETE" });
       await sb(`field_picks?id=gte.0`, { method: "DELETE" });
+      await sb(`peels?id=gte.0`, { method: "DELETE" });
       await sb(`weeks?id=gte.0`, { method: "DELETE" });
       await sb(`entries?id=gte.0`, {
         method: "PATCH", body: JSON.stringify({ status: "alive", died_week: null }),
@@ -1994,7 +1989,8 @@ function wireEntryRename() {
 //  WEEKLY AWARD — best weekly record peels a cutout section
 // ============================================================
 const CUTOUT_IMAGE = "cutout.jpg";   // commit this file next to index.html
-const TILE_COUNT = 20;               // 4 x 5
+const TILE_COUNT = 100;              // 10 x 10
+const PEELS_PER_WEEK = 4;            // winner peels this many per week
 
 // Compute the winner of a given week from graded picks.
 // Best record (correct) that week; ties broken by confidence points.
@@ -2030,20 +2026,24 @@ async function renderAward() {
     .map(p => p.week_number))].sort((a, b) => a - b);
 
   const peeledTiles = new Set((peels || []).map(p => p.tile_index));
-  const peeledWeeks = new Set((peels || []).map(p => p.week_number));
+  // count peels claimed per week
+  const peelsByWeek = {};
+  (peels || []).forEach(p => { peelsByWeek[p.week_number] = (peelsByWeek[p.week_number] || 0) + 1; });
 
-  // find the most recent graded week that hasn't been peeled yet -> an award is pending
-  let pendingWeek = null, pendingWinner = null;
+  // find earliest graded week that hasn't used all its peels yet -> award pending
+  let pendingWeek = null, pendingWinner = null, peelsUsedThisWeek = 0;
   for (const wk of gradedWeeks) {
-    if (!peeledWeeks.has(wk)) {
+    const used = peelsByWeek[wk] || 0;
+    if (used < PEELS_PER_WEEK) {
       const w = weeklyWinner(picks, wk, reqByWeek);
-      if (w) { pendingWeek = wk; pendingWinner = w; break; }
+      if (w) { pendingWeek = wk; pendingWinner = w; peelsUsedThisWeek = used; break; }
     }
   }
+  const peelsLeftThisWeek = pendingWeek ? PEELS_PER_WEEK - peelsUsedThisWeek : 0;
 
   const iAmWinner = pendingWinner && pendingWinner.id === ME;
   const winnerName = pendingWinner ? (PLAYERS.find(p => p.id === pendingWinner.id)?.name || pendingWinner.id) : null;
-  const canPeel = iAmWinner && peeledTiles.size < TILE_COUNT;
+  const canPeel = iAmWinner && peeledTiles.size < TILE_COUNT && peelsLeftThisWeek > 0;
 
   // banner
   let banner = "";
@@ -2051,9 +2051,9 @@ async function renderAward() {
     banner = `
       <div class="winner-banner">
         <div class="wtxt"><b>${winnerName} won Week ${pendingWeek}</b>
-          <small>${pendingWinner.correct} correct · ${pendingWinner.conf} confidence — earns one peel</small></div>
+          <small>${pendingWinner.correct} correct · ${pendingWinner.conf} confidence — earns ${PEELS_PER_WEEK} peels${peelsUsedThisWeek ? ` (${peelsLeftThisWeek} left)` : ""}</small></div>
         ${canPeel
-          ? `<div style="color:var(--gold);font-family:'Barlow Semi Condensed';font-weight:700;letter-spacing:0.1em;text-transform:uppercase;font-size:13px">Your peel — pick a tile</div>`
+          ? `<div style="color:var(--gold);font-family:'Barlow Semi Condensed';font-weight:700;letter-spacing:0.1em;text-transform:uppercase;font-size:13px">Your peel — pick ${peelsLeftThisWeek === 1 ? "a tile" : peelsLeftThisWeek + " tiles"}</div>`
           : iAmWinner
             ? `<div style="color:var(--ink-faint);font-size:12px">Fully revealed</div>`
             : `<div style="color:var(--ink-faint);font-size:12px">Only ${winnerName} can peel</div>`}
@@ -2063,7 +2063,7 @@ async function renderAward() {
       <small>Every section has been peeled. Behold.</small></div></div>`;
   } else {
     banner = `<div class="winner-banner"><div class="wtxt"><b>No award pending.</b>
-      <small>Once a week's picks are graded, the best record earns a peel.</small></div></div>`;
+      <small>Once a week's picks are graded, the best record earns ${PEELS_PER_WEEK} peels.</small></div></div>`;
   }
 
   // tiles
@@ -2084,7 +2084,7 @@ async function renderAward() {
 
   app.innerHTML = `
     <div class="st-section-title">Weekly Award — peel the cutout</div>
-    <p class="award-intro">Every week, whoever picked the best record earns the right to peel one section
+    <p class="award-intro">Every week, whoever picked the best record earns the right to peel ${PEELS_PER_WEEK} sections
       off the cutout. Best record wins; confidence points break ties. <b>Only that week's winner can peel.</b>
       ${peeledTiles.size} of ${TILE_COUNT} sections revealed.</p>
     ${banner}
@@ -2097,7 +2097,7 @@ async function renderAward() {
         and it'll appear here under the tiles.
       </div>
     </div>
-    <div class="award-status">${canPeel ? "Tap a covered tile to peel it." : ""}</div>
+    <div class="award-status">${canPeel ? `Tap ${peelsLeftThisWeek === 1 ? "a covered tile" : "covered tiles"} to peel.` : ""}</div>
     ${logRows ? `<div class="award-log"><h3>Peel history</h3>${logRows}</div>` : ""}`;
 
   if (canPeel) {
@@ -2108,7 +2108,7 @@ async function renderAward() {
 }
 
 async function peelTile(tileIndex, week) {
-  if (!confirm("Peel this section? You get one per week you win — choose deliberately.")) return;
+  if (!confirm("Peel this section? Choose deliberately — you get a limited number each week you win.")) return;
   try {
     await sb("peels", {
       method: "POST",
