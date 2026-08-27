@@ -285,6 +285,120 @@
   .setup-warn code { background: var(--panel-2); padding: 2px 6px; border-radius: 4px; font-size: 13px; }
 
   .center-msg { text-align: center; color: var(--ink-dim); padding: 60px 0; font-size: 14px; }
+
+  /* ---- Lock button ---- */
+  .lockbar {
+    margin: 22px 0 4px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 18px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+  }
+  .lockbar .lbltxt { font-size: 13px; color: var(--ink-dim); line-height: 1.5; }
+  .lockbar .lbltxt b { color: var(--ink); }
+  .btn-lock { background: var(--gold); color: #1a1200; white-space: nowrap; }
+  .btn-lock:hover { background: #ffd166; }
+  .btn-ghost {
+    background: transparent; border: 1px solid var(--line); color: var(--ink-dim);
+    font-size: 12px; padding: 9px 16px; letter-spacing: 0.08em;
+  }
+  .btn-ghost:hover { border-color: var(--alert); color: var(--alert); }
+
+  /* ---- Layout: board + ranking ---- */
+  .reveal-grid {
+    display: grid;
+    grid-template-columns: 1fr 260px;
+    gap: 18px;
+    align-items: start;
+  }
+  @media (max-width: 640px) {
+    .reveal-grid { grid-template-columns: 1fr; }
+  }
+
+  /* ---- Aggregate ranking (standings table) ---- */
+  .ranking {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    overflow: hidden;
+    position: sticky;
+    top: 16px;
+  }
+  .ranking h3 {
+    font-family: 'Barlow Semi Condensed', sans-serif;
+    font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--ink-dim); font-weight: 600;
+    padding: 14px 16px 10px; border-bottom: 1px solid var(--line);
+  }
+  .rank-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px 16px; border-bottom: 1px solid var(--line);
+    font-size: 14px;
+  }
+  .rank-row:last-child { border-bottom: none; }
+  .rank-row .pos {
+    font-family: 'Barlow Semi Condensed', sans-serif; font-weight: 700;
+    color: var(--ink-faint); width: 20px; font-size: 13px;
+  }
+  .rank-row.top6 .pos { color: var(--alert); }
+  .rank-row .tm { flex: 1; font-weight: 600; }
+  .rank-row .tm small { display:block; font-weight:400; color: var(--ink-faint); font-size: 11px; margin-top: 1px; }
+  .rank-row .tp {
+    font-family: 'Barlow Semi Condensed', sans-serif; font-weight: 700;
+    font-size: 16px; color: var(--ink);
+  }
+  .rank-row .tp small { font-size: 10px; color: var(--ink-faint); font-weight: 400; }
+  .rank-divider {
+    font-size: 9px; letter-spacing: 0.16em; text-transform: uppercase;
+    color: var(--ink-faint); text-align: center; padding: 5px;
+    background: var(--panel-2); border-bottom: 1px solid var(--line);
+  }
+
+  /* ---- Entry board ---- */
+  .board { display: flex; flex-direction: column; gap: 10px; }
+  .entry-card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 14px 16px;
+  }
+  .entry-card.dead { opacity: 0.5; }
+  .entry-head {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 10px;
+  }
+  .entry-head .id {
+    font-family: 'Barlow Condensed', sans-serif; font-weight: 700;
+    font-size: 20px; letter-spacing: 0.06em; text-transform: uppercase;
+  }
+  .entry-head .status-tag {
+    font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
+    padding: 3px 8px; border-radius: 20px; font-weight: 600;
+  }
+  .status-tag.alive { background: rgba(53,208,127,0.14); color: var(--live); }
+  .status-tag.dead  { background: rgba(255,77,61,0.14); color: var(--alert); }
+  .entry-assign { display: flex; align-items: center; gap: 10px; }
+  select.entry-team {
+    flex: 1; background: var(--panel-2); border: 1px solid var(--line);
+    color: var(--ink); font-family: 'Inter', sans-serif; font-size: 15px; font-weight: 500;
+    padding: 9px 10px; border-radius: 8px; cursor: pointer; -webkit-appearance: none; appearance: none;
+  }
+  select.entry-team:focus { outline: none; border-color: var(--alert); }
+  select.entry-team.unset { color: var(--ink-faint); }
+  select.entry-team option:disabled { color: var(--ink-faint); }
+  .entry-used {
+    margin-top: 9px; font-size: 11px; color: var(--ink-faint); line-height: 1.5;
+  }
+  .entry-used b { color: var(--ink-dim); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; font-size: 10px; }
+  .used-pill {
+    display: inline-block; background: var(--panel-2); border: 1px solid var(--line);
+    border-radius: 5px; padding: 1px 6px; margin: 2px 3px 0 0; color: var(--ink-dim); font-size: 11px;
+  }
+  .board-actions { margin-top: 16px; display: flex; gap: 12px; align-items: center; }
 </style>
 </head>
 <body>
@@ -414,6 +528,7 @@ async function renderWeek() {
 
   const submittedBy = new Set(subs.filter(s => s.submitted).map(s => s.player_id));
   const iSubmitted = submittedBy.has(ME);
+  const allIn = PLAYERS.length > 0 && PLAYERS.every(p => submittedBy.has(p.id));
 
   // week stat bar + tracker
   const trackerHtml = PLAYERS.map(p => {
@@ -435,11 +550,7 @@ async function renderWeek() {
     <div class="tracker">${trackerHtml}</div>`;
 
   if (wk.status === "locked" || wk.status === "resolved") {
-    app.innerHTML = headerHtml + `
-      <div class="locked-note">
-        Week ${wk.week_number} is <b>locked</b>. Picks are in and the crew is placing entries.
-        ${iSubmitted ? "Your list is submitted." : "You didn't get a list in for this week."}
-      </div>`;
+    await renderBoard(wk, headerHtml);
     return;
   }
 
@@ -471,7 +582,13 @@ async function renderWeek() {
     <div class="submitbar">
       <button class="btn btn-primary" id="submit">${iSubmitted ? "Update my list" : "Submit my list"}</button>
       <span class="msg" id="msg"></span>
-    </div>`;
+    </div>
+    ${allIn ? `
+      <div class="lockbar">
+        <div class="lbltxt"><b>All three lists are in.</b> Lock the week to reveal the master
+          ranking and start placing entries. Once locked, picks are final.</div>
+        <button class="btn btn-lock" id="lockweek">Lock week &amp; reveal</button>
+      </div>` : ""}`;
 
   // prevent picking the same team twice — live dedupe styling
   const selects = () => Array.from(app.querySelectorAll("select.team"));
@@ -488,6 +605,8 @@ async function renderWeek() {
   refreshDupes();
 
   document.getElementById("submit").onclick = () => submitPicks(wk, picksReq);
+  const lockBtn = document.getElementById("lockweek");
+  if (lockBtn) lockBtn.onclick = () => lockWeek(wk);
 }
 
 async function submitPicks(wk, picksReq) {
@@ -535,6 +654,182 @@ async function submitPicks(wk, picksReq) {
     btn.disabled = false;
     msg.className = "msg err";
     msg.textContent = "Save failed: " + e.message;
+  }
+}
+
+// ---- Lock the week ----
+async function lockWeek(wk) {
+  const btn = document.getElementById("lockweek");
+  if (btn) { btn.disabled = true; btn.textContent = "Locking…"; }
+  try {
+    await sb(`weeks?week_number=eq.${wk.week_number}`, {
+      method: "PATCH", body: JSON.stringify({ status: "locked" }),
+    });
+    renderWeek();
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = "Lock week & reveal"; }
+    alert("Couldn't lock: " + e.message);
+  }
+}
+
+// ---- Compute aggregate ranking from all picks this week ----
+// team -> { points, voters:[{player,rank,pts}] }.  rank r on a list of N = (N - r + 1) points.
+function computeAggregate(allPicks, picksReq) {
+  const map = {};
+  allPicks.forEach(p => {
+    const pts = picksReq - p.rank + 1;
+    if (!map[p.team]) map[p.team] = { team: p.team, points: 0, voters: [] };
+    map[p.team].points += pts;
+    map[p.team].voters.push({ player: p.player_id, rank: p.rank, pts });
+  });
+  return Object.values(map).sort((a, b) =>
+    b.points - a.points || a.team.localeCompare(b.team));
+}
+
+// ---- Reveal + entry board ----
+async function renderBoard(wk, headerHtml) {
+  const [allPicks, entries, assigns] = await Promise.all([
+    sbGet(`picks?week_number=eq.${wk.week_number}`),
+    sbGet(`entries?order=id.asc`),
+    sbGet(`assignments?order=week_number.asc`),
+  ]);
+
+  const agg = computeAggregate(allPicks, wk.picks_required);
+  const aggRank = {}; agg.forEach((a, i) => aggRank[a.team] = i + 1);
+
+  // per-entry used teams = every team this entry was assigned in PRIOR weeks
+  const usedByEntry = {};
+  entries.forEach(e => usedByEntry[e.id] = new Set());
+  assigns.forEach(a => {
+    if (a.week_number < wk.week_number) usedByEntry[a.entry_id]?.add(a.team);
+  });
+
+  // this week's existing assignments (to prefill the board)
+  const thisWeek = {};
+  assigns.filter(a => a.week_number === wk.week_number)
+         .forEach(a => thisWeek[a.entry_id] = a.team);
+
+  const playerName = id => (PLAYERS.find(p => p.id === id)?.name || id);
+
+  // ranking panel
+  let rankRows = "";
+  agg.forEach((a, i) => {
+    if (i === 6) rankRows += `<div class="rank-divider">— cutline —</div>`;
+    const voters = a.voters
+      .sort((x, y) => x.rank - y.rank)
+      .map(v => `${playerName(v.player)} #${v.rank}`).join(" · ");
+    rankRows += `
+      <div class="rank-row ${i < 6 ? "top6" : ""}">
+        <div class="pos">${i + 1}</div>
+        <div class="tm">${TEAM_NAME[a.team] || a.team}<small>${voters}</small></div>
+        <div class="tp">${a.points}<small> pt</small></div>
+      </div>`;
+  });
+  if (!agg.length) rankRows = `<div class="rank-row"><div class="tm" style="color:var(--ink-faint)">No picks submitted.</div></div>`;
+
+  const rankingHtml = `
+    <div class="ranking">
+      <h3>Master Ranking</h3>
+      ${rankRows}
+    </div>`;
+
+  // team dropdown options for an entry — disable teams this entry already used
+  function teamOptions(entryId, selected) {
+    const used = usedByEntry[entryId] || new Set();
+    const opts = [`<option value="" ${selected ? "" : "selected"}>— assign a team —</option>`];
+    // sort by aggregate rank so best picks float to the top of the list
+    const ordered = [...TEAMS].sort((a, b) =>
+      (aggRank[a[0]] || 99) - (aggRank[b[0]] || 99) || a[1].localeCompare(b[1]));
+    ordered.forEach(([ab, nm]) => {
+      const isUsed = used.has(ab);
+      const rk = aggRank[ab] ? `#${aggRank[ab]}` : "";
+      opts.push(`<option value="${ab}" ${selected === ab ? "selected" : ""} ${isUsed ? "disabled" : ""}>
+        ${nm}${rk ? "  " + rk : ""}${isUsed ? "  (used)" : ""}</option>`);
+    });
+    return opts.join("");
+  }
+
+  // board of entries
+  let boardHtml = "";
+  entries.forEach(e => {
+    const dead = e.status === "dead";
+    const used = [...(usedByEntry[e.id] || [])];
+    const sel = thisWeek[e.id] || "";
+    boardHtml += `
+      <div class="entry-card ${dead ? "dead" : ""}">
+        <div class="entry-head">
+          <div class="id">${e.label || "Entry " + e.id}</div>
+          <div class="status-tag ${dead ? "dead" : "alive"}">${dead ? "Eliminated" : "Alive"}</div>
+        </div>
+        ${dead ? `<div class="entry-used">Knocked out in Week ${e.died_week ?? "?"}.</div>` : `
+          <div class="entry-assign">
+            <select class="entry-team ${sel ? "" : "unset"}" data-entry="${e.id}">
+              ${teamOptions(e.id, sel)}
+            </select>
+          </div>
+          <div class="entry-used">
+            <b>Used:</b> ${used.length
+              ? used.map(t => `<span class="used-pill">${t}</span>`).join("")
+              : `<span style="color:var(--ink-faint)">none yet</span>`}
+          </div>`}
+      </div>`;
+  });
+
+  app.innerHTML = headerHtml + `
+    <div class="lockbar" style="margin-bottom:18px">
+      <div class="lbltxt"><b>Week ${wk.week_number} locked.</b> Place teams on the live entries below.
+        A team can go on more than one entry; an entry can't reuse a team it already played.</div>
+      <button class="btn btn-ghost" id="unlock">Unlock</button>
+    </div>
+    <div class="reveal-grid">
+      <div>
+        <div class="section-title">Entry Board</div>
+        <div class="board">${boardHtml}</div>
+        <div class="board-actions">
+          <button class="btn btn-primary" id="saveboard">Save assignments</button>
+          <span class="msg" id="boardmsg"></span>
+        </div>
+      </div>
+      ${rankingHtml}
+    </div>`;
+
+  app.querySelectorAll("select.entry-team").forEach(s => {
+    s.onchange = () => s.classList.toggle("unset", !s.value);
+  });
+  document.getElementById("saveboard").onclick = () => saveBoard(wk);
+  document.getElementById("unlock").onclick = async () => {
+    if (!confirm("Unlock the week? This lets everyone edit their lists again.")) return;
+    await sb(`weeks?week_number=eq.${wk.week_number}`, {
+      method: "PATCH", body: JSON.stringify({ status: "open" }),
+    });
+    renderWeek();
+  };
+}
+
+async function saveBoard(wk) {
+  const msg = document.getElementById("boardmsg");
+  msg.className = "msg"; msg.textContent = "Saving…";
+  const btn = document.getElementById("saveboard");
+  btn.disabled = true;
+
+  const rows = Array.from(app.querySelectorAll("select.entry-team"))
+    .filter(s => s.value)
+    .map(s => ({
+      week_number: wk.week_number,
+      entry_id: +s.dataset.entry,
+      team: s.value,
+      result: "pending",
+    }));
+
+  try {
+    // clear this week's assignments, then insert the current board
+    await sb(`assignments?week_number=eq.${wk.week_number}`, { method: "DELETE" });
+    if (rows.length) await sb("assignments", { method: "POST", body: JSON.stringify(rows) });
+    msg.className = "msg ok"; msg.textContent = "Assignments saved ✓";
+    btn.disabled = false;
+  } catch (e) {
+    btn.disabled = false;
+    msg.className = "msg err"; msg.textContent = "Save failed: " + e.message;
   }
 }
 
