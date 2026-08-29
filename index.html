@@ -39,7 +39,14 @@
     padding: 0 20px 80px;
   }
 
-  .wrap { max-width: 720px; margin: 0 auto; }
+  .wrap { max-width: 720px; margin: 0 auto; transition: max-width .25s ease; }
+  /* Content-aware widths: reading-heavy screens stay narrow; table/two-column screens widen.
+     Header + tabs live in .wrap too, so they track the active tab's width — which is fine. */
+  body[data-tab="week"] .wrap { max-width: 1040px; }      /* picks + matchups two-column */
+  body[data-tab="standings"] .wrap { max-width: 1000px; } /* wide tables, week grid, pot, ledger */
+  body[data-tab="award"] .wrap { max-width: 760px; }      /* cutout + log: mostly centered, keep tight */
+  body[data-tab="field"] .wrap { max-width: 920px; }      /* concentration bars + stats */
+  /* On the pick screen the board/ranking reveal also benefits from width (shares "week" tab) */
 
   /* ---- Masthead ---- */
   header {
@@ -964,6 +971,7 @@ function renderWhoami() {
 // ---- Name select gate ----
 function renderGate() {
   renderWhoami();
+  document.body.removeAttribute("data-tab");   // default narrow width for sign-in
   const strip = document.getElementById("potstrip");
   if (strip) strip.style.display = "none";
   app.innerHTML = `
@@ -2743,6 +2751,7 @@ function wireTabs() {
   });
 }
 function routeTab() {
+  document.body.setAttribute("data-tab", CURRENT_TAB);
   app.innerHTML = `<div class="center-msg">Loading…</div>`;
   renderPotStrip();   // keep the persistent pot readout current on every tab
   if (CURRENT_TAB === "field") renderField();
