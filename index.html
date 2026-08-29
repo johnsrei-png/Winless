@@ -1691,13 +1691,13 @@ async function renderStandings() {
   const valueByTile = {}; const typeByTile = {};
   (tileValues || []).forEach(t => { valueByTile[t.tile_index] = Number(t.amount); typeByTile[t.tile_index] = t.type || "money"; });
 
-  // per-peel effective signed amount (what EACH other player owes the peeler; negative = peeler owes them)
+  // per-peel effective signed amount (what EACH other player owes the peeler).
+  // Negatives now pay the POT, not other players, so they contribute 0 to the player ledger.
   const effOf = (p) => {
     if (p.effective != null) return Number(p.effective);
     const type = typeByTile[p.tile_index] || "money";
-    if (type === "multiplier") return 0;
-    const base = valueByTile[p.tile_index] || 0;
-    return type === "negative" ? -base : base;
+    if (type === "multiplier" || type === "negative" || type === "pot") return 0;
+    return valueByTile[p.tile_index] || 0;
   };
 
   const earned = {}; PLAYERS.forEach(p => earned[p.id] = 0);
@@ -1810,7 +1810,7 @@ async function renderStandings() {
           </div>`).join("")}
       </div>
       <p class="field-note">The pot fills $${WEEKLY_ANTE} each week from whoever had the <b>worst</b> record
-        (confidence, then latest submission, breaks ties), plus any 🏺 pot tiles peeled. At season's end it's
+        (confidence, then latest submission, breaks ties), plus every 💀 penalty tile peeled. At season's end it's
         <b>winner-take-all</b> to whoever won the most individual weeks.</p>
     </div>`;
 
@@ -1822,16 +1822,16 @@ async function renderStandings() {
     let running = 0;
     const rows = mine.map(p => {
       const type = typeByTile[p.tile_index] || "money";
+      const base = valueByTile[p.tile_index] || 0;
       if (type === "multiplier") return `<div class="bd-row"><span>Week ${p.week_number} · ×2 multiplier</span><span style="color:var(--gold)">armed next</span></div>`;
-      if (type === "pot") { const base = valueByTile[p.tile_index]||0; return `<div class="bd-row"><span>Week ${p.week_number} · 🏺 pot tile</span><span style="color:var(--ink-faint)">−$${base.toFixed(2)} to pot</span></div>`; }
+      if (type === "pot") return `<div class="bd-row"><span>Week ${p.week_number} · 🏺 pot tile</span><span style="color:var(--ink-faint)">−$${base.toFixed(2)} to pot</span></div>`;
+      if (type === "negative") return `<div class="bd-row"><span>Week ${p.week_number} · 💀 penalty</span><span style="color:var(--alert)">−$${base.toFixed(2)} to pot</span></div>`;
       const eff = effOf(p);
       running += eff;
-      const sign = eff < 0 ? "−" : "+";
-      const col = eff < 0 ? "var(--alert)" : "var(--live)";
-      return `<div class="bd-row"><span>Week ${p.week_number} · ${type === "jackpot" ? "💰 jackpot" : type === "negative" ? "negative" : "money"}</span>
-        <span style="color:${col}">${sign}$${Math.abs(eff).toFixed(2)} each</span></div>`;
+      return `<div class="bd-row"><span>Week ${p.week_number} · ${type === "jackpot" ? "💰 jackpot" : "money"}</span>
+        <span style="color:var(--live)">+$${eff.toFixed(2)} each</span></div>`;
     }).join("");
-    return rows + `<div class="bd-row bd-total"><span><b>Net per player</b></span>
+    return rows + `<div class="bd-row bd-total"><span><b>Net collected</b></span>
       <span><b>$${running.toFixed(2)}</b> each · $${(running*2).toFixed(2)} total</span></div>`;
   };
 
@@ -2255,10 +2255,10 @@ const PEELS_PER_WEEK = 4;            // winner peels this many per week
 // Tile types across the 100 tiles.
 //  - money:      positive $, both others owe the peeler
 //  - jackpot:    big positive $ (one grail tile)
-//  - negative:   the peeler owes both others
+//  - negative:   you PAY this amount into the season side pot (penalty)
 //  - multiplier: doubles the NEXT peel (good or bad); if it's the last peel, grants 1 bonus peel
 const TILE_PLAN = [
-  // positive money (~74)
+  // positive money (~76)
   { type: "money", amount: 0.25, count: 22 },
   { type: "money", amount: 0.50, count: 15 },
   { type: "money", amount: 1.00, count: 14 },
@@ -2266,14 +2266,10 @@ const TILE_PLAN = [
   { type: "money", amount: 3.00, count: 6 },
   { type: "money", amount: 5.00, count: 4 },
   { type: "money", amount: 10.00, count: 2 },
-  // negatives (~13): you owe both others
-  { type: "negative", amount: 1.00, count: 7 },
-  { type: "negative", amount: 2.00, count: 4 },
-  { type: "negative", amount: 3.00, count: 2 },
-  // pot tiles (~4): peel it, that $ goes into the season side pot (from the peeler)
-  { type: "pot", amount: 1.00, count: 2 },
-  { type: "pot", amount: 2.00, count: 1 },
-  { type: "pot", amount: 3.00, count: 1 },
+  // negatives (~17): you pay this into the season side pot
+  { type: "negative", amount: 1.00, count: 9 },
+  { type: "negative", amount: 2.00, count: 5 },
+  { type: "negative", amount: 3.00, count: 3 },
   // jackpot (1)
   { type: "jackpot", amount: 25.00, count: 1 },
   // multipliers (~6): x2 the next peel
@@ -2419,9 +2415,9 @@ async function renderAward() {
     const base = valueByTile[p.tile_index] || 0;
     if (type === "multiplier") return { txt: "×2 multiplier", cls: "var(--gold)" };
     if (type === "pot") return { txt: `🏺 $${base.toFixed(2)} to the pot`, cls: "var(--gold)" };
+    if (type === "negative") return { txt: `💀 $${base.toFixed(2)} to the pot`, cls: "var(--alert)" };
     // effective is signed per-other-player amount actually owed (may include x2)
-    const eff = (p.effective != null) ? Number(p.effective) : (type === "negative" ? -base : base);
-    if (eff < 0) return { txt: `−$${Math.abs(eff).toFixed(2)} you owe each`, cls: "var(--alert)" };
+    const eff = (p.effective != null) ? Number(p.effective) : base;
     if (type === "jackpot") return { txt: `💰 JACKPOT $${eff.toFixed(2)} each`, cls: "var(--gold)" };
     return { txt: `$${eff.toFixed(2)} from each`, cls: "var(--live)" };
   };
@@ -2433,21 +2429,21 @@ async function renderAward() {
         <span class="when">Week ${p.week_number} · <b style="color:${l.cls}">${l.txt}</b></span></div>`;
     }).join("");
 
-  // total in play = sum of positive effective amounts x2 (rough headline number)
+  // total in play = sum of positive (money/jackpot) effective amounts x2. Negatives go to the pot, not here.
   const totalPot = (peels || []).reduce((s, p) => {
     const type = typeByTile[p.tile_index] || "money";
-    if (type === "multiplier") return s;
-    const eff = (p.effective != null) ? Number(p.effective) : (type === "negative" ? -(valueByTile[p.tile_index]||0) : (valueByTile[p.tile_index]||0));
+    if (type !== "money" && type !== "jackpot") return s;
+    const eff = (p.effective != null) ? Number(p.effective) : (valueByTile[p.tile_index]||0);
     return s + Math.abs(eff) * 2;
   }, 0);
 
   app.innerHTML = `
     <div class="st-section-title">Weekly Award — peel the cutout</div>
     <p class="award-intro">Each week's best record peels ${PEELS_PER_WEEK} tiles. Tiles hide dollar amounts
-      <b>both others owe you</b> ($0.25–$10), plus surprises: <b style="color:var(--alert)">negative tiles</b>
-      (you owe both), a <b style="color:var(--gold)">$25 jackpot</b>, and <b style="color:var(--gold)">×2 multipliers</b>
+      <b>both others owe you</b> ($0.25–$10), plus surprises: <b style="color:var(--alert)">penalty tiles</b>
+      (you pay the season pot), a <b style="color:var(--gold)">$25 jackpot</b>, and <b style="color:var(--gold)">×2 multipliers</b>
       that double your next peel — good or bad. ${peeledTiles.size} of ${TILE_COUNT} revealed ·
-      <b style="color:var(--live)">$${totalPot.toFixed(2)}</b> in motion. Ledger on Standings.</p>
+      <b style="color:var(--live)">$${totalPot.toFixed(2)}</b> in player winnings. Ledger on Standings.</p>
     ${banner}
     <div class="cutout-wrap">
       <img class="cutout-img" src="${CUTOUT_IMAGE}" alt="cutout"
@@ -2480,12 +2476,12 @@ async function peelTile(tileIndex, week, typeByTile, valueByTile, multiplierArme
   const base = valueByTile[tileIndex] || 0;
   const mult = multiplierArmed ? 2 : 1;
 
-  // resolve effective signed per-other-player amount
+  // resolve effective signed per-other-player amount + any pot contribution
   let effective = 0;
   let potContribution = 0;
   if (type === "money" || type === "jackpot") effective = base * mult;
-  else if (type === "negative") effective = -base * mult;
-  else if (type === "pot") { effective = 0; potContribution = base * mult; }  // peeler feeds the pot
+  else if (type === "negative") { effective = 0; potContribution = base * mult; }  // penalty -> pay the pot
+  else if (type === "pot") { effective = 0; potContribution = base * mult; }        // legacy pot tiles (if any remain)
   else if (type === "multiplier") effective = 0;   // no money; arms next peel
 
   try {
@@ -2495,12 +2491,13 @@ async function peelTile(tileIndex, week, typeByTile, valueByTile, multiplierArme
         tile_index: tileIndex, week_number: week, player_id: ME, effective,
       }),
     });
-    // pot tile: record a contribution to the side pot
+    // negative/pot tile: record a contribution to the side pot
     if (potContribution > 0) {
       await sb("pot_ledger", {
         method: "POST",
         body: JSON.stringify({
-          player_id: ME, amount: potContribution, week_number: week, reason: "pot tile",
+          player_id: ME, amount: potContribution, week_number: week,
+          reason: type === "negative" ? "penalty tile" : "pot tile",
         }),
       }).catch(() => {});
     }
@@ -2508,12 +2505,12 @@ async function peelTile(tileIndex, week, typeByTile, valueByTile, multiplierArme
     setTimeout(() => {
       if (type === "multiplier") {
         alert("✖️2 MULTIPLIER! Your next peel is doubled — good or bad. You get a bonus peel to use it.");
+      } else if (type === "negative") {
+        alert(`💀 PENALTY! You pay $${potContribution.toFixed(2)} into the season pot.${mult>1?" (×2 applied — brutal!)":""}`);
       } else if (type === "pot") {
         alert(`🏺 POT TILE! You drop $${potContribution.toFixed(2)} into the season side pot.${mult>1?" (×2 applied!)":""}`);
       } else if (type === "jackpot") {
         alert(`💰💰 JACKPOT! $${effective.toFixed(2)} from EACH of the others — $${(effective*2).toFixed(2)} total!${mult>1?" (×2 applied!)":""}`);
-      } else if (effective < 0) {
-        alert(`💀 OUCH — negative tile. You owe EACH of the others $${Math.abs(effective).toFixed(2)} — $${(Math.abs(effective)*2).toFixed(2)} total.${mult>1?" (×2 applied — brutal!)":""}`);
       } else {
         alert(`💰 $${effective.toFixed(2)} from each — $${(effective*2).toFixed(2)} total.${mult>1?" (×2 applied!)":""}`);
       }
