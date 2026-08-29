@@ -696,7 +696,28 @@
   }
   .pot-leader b { color: var(--gold); font-family: 'Barlow Semi Condensed', sans-serif; letter-spacing: 0.04em; }
 
-  /* ---- Ledger drill-down ---- */
+  /* ---- Persistent pot strip (under tabs, every tab) ---- */
+  .pot-strip {
+    display: flex; align-items: center; gap: 12px;
+    background: linear-gradient(90deg, rgba(245,196,81,0.12), rgba(245,196,81,0.02));
+    border: 1px solid var(--line); border-left: 3px solid var(--gold);
+    border-radius: 10px; padding: 10px 16px; margin-bottom: 22px; cursor: pointer;
+    transition: border-color .12s, transform .1s;
+  }
+  .pot-strip:hover { border-color: var(--gold); transform: translateY(-1px); }
+  .pot-strip .ps-label {
+    font-family: 'Barlow Semi Condensed', sans-serif; font-size: 11px; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--ink-faint); font-weight: 600;
+  }
+  .pot-strip .ps-amt {
+    font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-size: 24px;
+    color: var(--gold); line-height: 1;
+  }
+  .pot-strip .ps-lead {
+    margin-left: auto; font-size: 12px; color: var(--ink-dim);
+    font-family: 'Barlow Semi Condensed', sans-serif; letter-spacing: 0.04em;
+  }
+
   .bd-caret { font-size: 11px; color: var(--ink-faint); }
   .ledger-row:hover { background: var(--panel-2); }
   .bd-panel {
@@ -786,6 +807,8 @@
     <button class="tab" data-tab="award">Weekly Award</button>
     <button class="tab" data-tab="field">Field</button>
   </nav>
+
+  <div id="potstrip" class="pot-strip" style="display:none"></div>
 
   <main id="app"><div class="center-msg">Loading…</div></main>
 </div>
@@ -941,6 +964,8 @@ function renderWhoami() {
 // ---- Name select gate ----
 function renderGate() {
   renderWhoami();
+  const strip = document.getElementById("potstrip");
+  if (strip) strip.style.display = "none";
   app.innerHTML = `
     <div class="gate">
       <h2>Who's picking?</h2>
@@ -1613,6 +1638,103 @@ function renderFieldIntel(field, week) {
 }
 
 // ============================================================
+//  Shared season-pot computation (used by Standings + persistent strip)
+// ============================================================
+const WEEKLY_ANTE = 2;
+
+async function computePot() {
+  const [picks, weeks, subs, potLedger] = await Promise.all([
+    sbGet(`picks?order=week_number.asc`).catch(() => []),
+    sbGet(`weeks?order=week_number.asc`).catch(() => []),
+    sbGet(`submissions?order=week_number.asc`).catch(() => []),
+    sbGet(`pot_ledger?order=id.asc`).catch(() => []),
+  ]);
+  const reqByWeek = {}; (weeks || []).forEach(w => reqByWeek[w.week_number] = w.picks_required);
+  const firstSubByWeek = {};
+  (subs || []).forEach(s => {
+    if (!s.first_submitted_at) return;
+    (firstSubByWeek[s.week_number] ||= {})[s.player_id] = s.first_submitted_at;
+  });
+  const seasonCorrect = {}; PLAYERS.forEach(p => seasonCorrect[p.id] = 0);
+  (picks || []).forEach(p => { if (p.result === "correct" && seasonCorrect[p.player_id] != null) seasonCorrect[p.player_id]++; });
+
+  const gradedWeekNums = [...new Set((picks || [])
+    .filter(p => p.result && p.result !== "pending").map(p => p.week_number))].sort((a,b)=>a-b);
+
+  const weekRecords = (wk) => {
+    const s = {}; PLAYERS.forEach(p => s[p.id] = { correct:0, conf:0 });
+    (picks || []).filter(p => p.week_number === wk && p.result && p.result !== "pending").forEach(p => {
+      const req = reqByWeek[wk] || 8; const pts = req - p.rank + 1;
+      if (!s[p.player_id]) return;
+      if (p.result === "correct") { s[p.player_id].correct++; s[p.player_id].conf += pts; }
+    });
+    return s;
+  };
+  const subTimeFor = (wk, id) => (firstSubByWeek[wk]?.[id]) || "9999";
+
+  const weeklyWins = {}; PLAYERS.forEach(p => weeklyWins[p.id] = 0);
+  const potFromPenalty = [];
+  gradedWeekNums.forEach(wk => {
+    const s = weekRecords(wk);
+    const order = PLAYERS.map(p => ({ id: p.id, ...s[p.id], seasonCorrect: seasonCorrect[p.id], sub: subTimeFor(wk, p.id) }));
+    const best = order.slice().sort((a,b)=> b.correct-a.correct || b.conf-a.conf || a.sub.localeCompare(b.sub))[0];
+    const worst = order.slice().sort((a,b)=> a.correct-b.correct || a.conf-b.conf || b.sub.localeCompare(a.sub))[0];
+    if (best) weeklyWins[best.id]++;
+    if (worst) potFromPenalty.push({ player_id: worst.id, amount: WEEKLY_ANTE, week: wk });
+  });
+
+  const potTileContribs = (potLedger || []).map(r => ({ player_id: r.player_id, amount: Number(r.amount) }));
+  const allContribs = [...potFromPenalty, ...potTileContribs];
+  const potTotal = allContribs.reduce((s,c)=> s + c.amount, 0);
+  const paidBy = {}; PLAYERS.forEach(p => paidBy[p.id] = 0);
+  allContribs.forEach(c => { if (paidBy[c.player_id] != null) paidBy[c.player_id] += c.amount; });
+
+  const winsRanked = PLAYERS.map(p => ({ id: p.id, wins: weeklyWins[p.id], seasonCorrect: seasonCorrect[p.id] }))
+    .sort((a,b)=> b.wins-a.wins || b.seasonCorrect-a.seasonCorrect);
+  const potLeader = winsRanked[0] || null;
+  const potTied = potLeader ? winsRanked.filter(w => w.wins === potLeader.wins && potLeader.wins > 0) : [];
+
+  return { potTotal, potLeader, potTied, winsRanked, paidBy, weeklyWins, gradedWeekNums };
+}
+
+// Render the always-visible pot strip (under the tabs). Clicking jumps to Standings.
+async function renderPotStrip() {
+  const strip = document.getElementById("potstrip");
+  if (!strip || !ME || !PLAYERS.length) { if (strip) strip.style.display = "none"; return; }
+  try {
+    const { potTotal, potLeader, potTied } = await computePot();
+    const nameOf = id => PLAYERS.find(p => p.id === id)?.name || id;
+    let leadTxt;
+    if (potLeader && potLeader.wins > 0) {
+      leadTxt = potTied.length > 1
+        ? `Tied: ${potTied.map(t=>nameOf(t.id)).join(" & ")}`
+        : `Leader: ${nameOf(potLeader.id)}`;
+    } else {
+      leadTxt = "Building…";
+    }
+    strip.innerHTML = `
+      <span class="ps-label">Season Pot</span>
+      <span class="ps-amt">$${potTotal.toFixed(2)}</span>
+      <span class="ps-lead">${leadTxt}</span>`;
+    strip.style.display = "flex";
+    strip.onclick = () => {
+      CURRENT_TAB = "standings";
+      document.querySelectorAll(".tab").forEach(x => x.classList.toggle("active", x.dataset.tab === "standings"));
+      routeTab();
+      // once Standings has rendered, scroll the pot section into view
+      const tryScroll = (attempt = 0) => {
+        const el = document.getElementById("potsection");
+        if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+        else if (attempt < 10) setTimeout(() => tryScroll(attempt + 1), 100);
+      };
+      setTimeout(() => tryScroll(), 150);
+    };
+  } catch (e) {
+    strip.style.display = "none";
+  }
+}
+
+// ============================================================
 //  STANDINGS TAB — how accurate each of us has been
 // ============================================================
 async function renderStandings() {
@@ -1785,7 +1907,7 @@ async function renderStandings() {
   const potTied = winsRanked.filter(w => w.wins === potLeader.wins && potLeader.wins > 0);
 
   const potHtml = `
-    <div class="st-weekly">
+    <div class="st-weekly" id="potsection">
       <div class="st-section-title">Season Side Pot</div>
       <div class="pot-hero">
         <div class="pot-amt">$${potTotal.toFixed(2)}</div>
@@ -2622,6 +2744,7 @@ function wireTabs() {
 }
 function routeTab() {
   app.innerHTML = `<div class="center-msg">Loading…</div>`;
+  renderPotStrip();   // keep the persistent pot readout current on every tab
   if (CURRENT_TAB === "field") renderField();
   else if (CURRENT_TAB === "standings") renderStandings();
   else if (CURRENT_TAB === "award") renderAward();
@@ -2657,6 +2780,7 @@ async function safeRefresh() {
   _refreshing = true;
   try {
     // re-render the current tab WITHOUT the "Loading…" flash
+    renderPotStrip();
     if (CURRENT_TAB === "field") await renderField();
     else if (CURRENT_TAB === "standings") await renderStandings();
     else if (CURRENT_TAB === "award") await renderAward();
