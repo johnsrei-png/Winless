@@ -695,6 +695,21 @@
     text-align: center; font-size: 14px; color: var(--ink-dim); margin-bottom: 6px;
   }
   .pot-leader b { color: var(--gold); font-family: 'Barlow Semi Condensed', sans-serif; letter-spacing: 0.04em; }
+
+  /* ---- Ledger drill-down ---- */
+  .bd-caret { font-size: 11px; color: var(--ink-faint); }
+  .ledger-row:hover { background: var(--panel-2); }
+  .bd-panel {
+    background: var(--panel-2); border-bottom: 1px solid var(--line);
+    padding: 6px 18px 12px;
+  }
+  .bd-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 6px 0; font-size: 13px; color: var(--ink-dim);
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+  }
+  .bd-row:last-child { border-bottom: none; }
+  .bd-row.bd-total { margin-top: 4px; padding-top: 10px; border-top: 1px solid var(--line); color: var(--ink); }
   .placed-card .pteam {
     flex: 1; font-family: 'Barlow Semi Condensed', sans-serif; font-weight: 700;
     font-size: 22px; letter-spacing: 0.02em;
@@ -1799,6 +1814,27 @@ async function renderStandings() {
         <b>winner-take-all</b> to whoever won the most individual weeks.</p>
     </div>`;
 
+  // per-player peel breakdown for the drill-down
+  const breakdownFor = (pid) => {
+    const mine = (peels || []).filter(p => p.player_id === pid)
+      .sort((a,b) => (a.created_at||"").localeCompare(b.created_at||""));
+    if (!mine.length) return `<div class="bd-row"><span style="color:var(--ink-faint)">No peels yet.</span></div>`;
+    let running = 0;
+    const rows = mine.map(p => {
+      const type = typeByTile[p.tile_index] || "money";
+      if (type === "multiplier") return `<div class="bd-row"><span>Week ${p.week_number} · ×2 multiplier</span><span style="color:var(--gold)">armed next</span></div>`;
+      if (type === "pot") { const base = valueByTile[p.tile_index]||0; return `<div class="bd-row"><span>Week ${p.week_number} · 🏺 pot tile</span><span style="color:var(--ink-faint)">−$${base.toFixed(2)} to pot</span></div>`; }
+      const eff = effOf(p);
+      running += eff;
+      const sign = eff < 0 ? "−" : "+";
+      const col = eff < 0 ? "var(--alert)" : "var(--live)";
+      return `<div class="bd-row"><span>Week ${p.week_number} · ${type === "jackpot" ? "💰 jackpot" : type === "negative" ? "negative" : "money"}</span>
+        <span style="color:${col}">${sign}$${Math.abs(eff).toFixed(2)} each</span></div>`;
+    }).join("");
+    return rows + `<div class="bd-row bd-total"><span><b>Net per player</b></span>
+      <span><b>$${running.toFixed(2)}</b> each · $${(running*2).toFixed(2)} total</span></div>`;
+  };
+
   const ledgerHtml = anyMoney ? `
     <div class="st-weekly">
       <div class="st-section-title">Money — the peel ledger</div>
@@ -1807,13 +1843,14 @@ async function renderStandings() {
           <div>Player</div><div>Collected</div>
         </div>
         ${PLAYERS.slice().sort((a,b)=>earned[b.id]-earned[a.id]).map(p => `
-          <div class="st-row" style="grid-template-columns:1fr 120px">
-            <div class="st-name">${p.name}</div>
+          <div class="st-row ledger-row" data-pid="${p.id}" style="grid-template-columns:1fr 120px;cursor:pointer">
+            <div class="st-name">${p.name} <span class="bd-caret">▸</span></div>
             <div class="st-val st-pct">$${(earned[p.id]*2).toFixed(2)}</div>
-          </div>`).join("")}
+          </div>
+          <div class="bd-panel" data-bd="${p.id}" style="display:none">${breakdownFor(p.id)}</div>`).join("")}
       </div>
       <p class="field-note">"Collected" is the total owed to each player across both others.
-        Each peeled tile is owed by <b>both</b> other players, so a $5 tile = $10 collected.</p>
+        Tap a player to see the tile-by-tile math. Each peeled tile is owed by <b>both</b> others, so a $5 tile = $10 collected.</p>
       <div class="settle-box">
         <h3>Who owes who</h3>
         ${settlements.length
@@ -1847,6 +1884,19 @@ async function renderStandings() {
     </div>
     ${potHtml}
     ${ledgerHtml}`;
+
+  // wire ledger drill-down toggles
+  app.querySelectorAll(".ledger-row").forEach(row => {
+    row.onclick = () => {
+      const pid = row.dataset.pid;
+      const panel = app.querySelector(`.bd-panel[data-bd="${pid}"]`);
+      const caret = row.querySelector(".bd-caret");
+      if (!panel) return;
+      const open = panel.style.display !== "none";
+      panel.style.display = open ? "none" : "block";
+      if (caret) caret.textContent = open ? "▸" : "▾";
+    };
+  });
 }
 
 // ============================================================
