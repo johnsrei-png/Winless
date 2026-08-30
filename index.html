@@ -763,6 +763,28 @@
   .pw-reset-row .pw-input { flex: 1; }
   .dead-note { color: var(--ink-faint); font-style: italic; margin-top: 10px; }
 
+  /* ---- Best Losers panel ---- */
+  .bl-controls { display: flex; gap: 6px; margin-bottom: 12px; }
+  .bl-sort {
+    flex: 1; background: var(--panel-2); border: 1px solid var(--line); color: var(--ink-dim);
+    border-radius: 8px; padding: 7px 8px; font-size: 11px; font-family: 'Barlow Semi Condensed', sans-serif;
+    letter-spacing: 0.06em; text-transform: uppercase; cursor: pointer;
+  }
+  .bl-sort.active { border-color: var(--gold); color: var(--gold); background: rgba(245,196,81,0.08); }
+  .bl-row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 4px; border-bottom: 1px solid var(--line);
+  }
+  .bl-row:last-child { border-bottom: none; }
+  .bl-score {
+    font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-size: 24px;
+    width: 34px; text-align: center; flex-shrink: 0; line-height: 1;
+  }
+  .bl-team { min-width: 0; }
+  .bl-name { font-weight: 600; font-size: 14px; }
+  .bl-side { color: var(--ink-faint); font-weight: 400; font-size: 12px; }
+  .bl-meta { font-size: 11px; color: var(--ink-faint); font-family: 'Barlow Semi Condensed', sans-serif; margin-top: 1px; }
+
   .pot-strip {
     display: flex; align-items: center; gap: 12px;
     background: linear-gradient(90deg, rgba(245,196,81,0.12), rgba(245,196,81,0.02));
@@ -1329,12 +1351,16 @@ async function renderWeek() {
           </div>` : ""}
       </div>
       <aside class="matchups" id="matchups">
-        <div class="section-title">Week ${wk.week_number} Matchups</div>
-        <div class="matchup-loading">Loading lines…</div>
+        <div class="section-title">Best Losers — Week ${wk.week_number}</div>
+        <div class="bl-controls" id="blcontrols" style="display:none">
+          <button class="bl-sort active" data-sort="score">By loser score</button>
+          <button class="bl-sort" data-sort="time">By kickoff</button>
+        </div>
+        <div class="matchup-loading">Crunching the lines…</div>
       </aside>
     </div>`;
 
-  // load matchups + lines from ESPN (client-side) into the side panel
+  // load matchups + compute Best Loser scores from ESPN (client-side) into the side panel
   loadMatchups(wk.week_number);
 
   // prevent picking the same team twice — live dedupe styling
@@ -2976,6 +3002,25 @@ async function peelTile(tileIndex, week, typeByTile, valueByTile, multiplierArme
 }
 
 // Fetch this week's NFL matchups + lines from ESPN and fill the side panel.
+// ============================================================
+//  Best Loser scoring — how likely is each team to LOSE this week?
+//  Higher score = better "loser" pick. Built from Vegas lines (which
+//  already price in injuries, QB, rest, weather) + opponent strength.
+// ============================================================
+
+// Convert a point spread (from THIS team's perspective; positive = underdog)
+// into an approximate probability that THIS team loses. Calibrated to NFL:
+// a 7-point dog loses ~70%, a 3-point dog ~57%, pick'em 50%.
+function spreadToLossProb(teamSpread) {
+  // logistic on the spread; ~0.028 per point matches NFL win-prob curves
+  return 1 / (1 + Math.exp(-0.155 * teamSpread));
+}
+// American moneyline → implied probability (of the outcome it's quoting).
+function moneylineToProb(ml) {
+  if (ml == null || isNaN(ml)) return null;
+  return ml < 0 ? (-ml) / (-ml + 100) : 100 / (ml + 100);
+}
+
 async function loadMatchups(week) {
   const panel = document.getElementById("matchups");
   if (!panel) return;
@@ -2986,49 +3031,126 @@ async function loadMatchups(week) {
     const res = await fetch(url);
     if (!res.ok) throw new Error("ESPN " + res.status);
     const data = await res.json();
-    const games = (data.events || []).map(ev => {
+
+    // Build a per-TEAM row: each game yields two teams, each with a loser score.
+    const teams = [];
+    (data.events || []).forEach(ev => {
       const comp = ev.competitions?.[0];
-      if (!comp) return null;
+      if (!comp) return;
       const cs = comp.competitors || [];
       const home = cs.find(c => c.homeAway === "home");
       const away = cs.find(c => c.homeAway === "away");
-      if (!home || !away) return null;
+      if (!home || !away) return;
+
       const odds = comp.odds?.[0];
-      // details is like "KC -6.5"; overUnder is a number. Fall back gracefully.
-      const line = odds?.details || (odds?.overUnder ? `O/U ${odds.overUnder}` : "—");
+      // spread details like "KC -6.5" → favorite abbr + number
+      let favAbbr = null, spreadMag = null;
+      if (odds?.details && odds.details !== "EVEN") {
+        const m = odds.details.match(/([A-Z]{2,4})\s*(-?\d+(\.\d+)?)/);
+        if (m) { favAbbr = m[1]; spreadMag = Math.abs(parseFloat(m[2])); }
+      } else if (odds?.spread != null) {
+        spreadMag = Math.abs(odds.spread);
+        favAbbr = odds.spread < 0 ? home.team?.abbreviation : away.team?.abbreviation;
+      }
+
       const dt = ev.date ? new Date(ev.date) : null;
       const when = dt ? dt.toLocaleDateString("en-US", { weekday: "short" }) + " " +
         dt.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : "";
-      return {
-        homeAbbr: home.team?.abbreviation, awayAbbr: away.team?.abbreviation,
-        homeName: home.team?.shortDisplayName || home.team?.abbreviation,
-        awayName: away.team?.shortDisplayName || away.team?.abbreviation,
-        line, when, date: dt ? dt.getTime() : 0,
-      };
-    }).filter(Boolean).sort((a, b) => a.date - b.date);
 
-    if (!games.length) {
+      // records for opponent-strength nudge
+      const recOf = (c) => {
+        const s = (c.records || []).find(r => r.type === "total" || r.name === "overall")?.summary
+               || c.records?.[0]?.summary || "";
+        const mm = s.match(/(\d+)-(\d+)/);
+        if (!mm) return null;
+        const w = +mm[1], l = +mm[2];
+        return (w + l) > 0 ? w / (w + l) : null;
+      };
+      const homeWinPct = recOf(home), awayWinPct = recOf(away);
+
+      // moneylines if present
+      const homeML = odds?.homeTeamOdds?.moneyLine, awayML = odds?.awayTeamOdds?.moneyLine;
+
+      [[home, away, "home", homeML, awayWinPct, homeWinPct],
+       [away, home, "away", awayML, homeWinPct, awayWinPct]].forEach(
+        ([t, opp, side, ml, oppWinPct, myWinPct]) => {
+          const ab = t.team?.abbreviation;
+          if (!ab) return;
+          // team spread from its own perspective: + = underdog (expected to lose)
+          let teamSpread = null;
+          if (spreadMag != null && favAbbr) teamSpread = (ab === favAbbr) ? -spreadMag : spreadMag;
+
+          // base loss prob from spread
+          let lossProb = teamSpread != null ? spreadToLossProb(teamSpread) : 0.5;
+
+          // blend in moneyline-implied loss prob when available (average the two)
+          const mlProb = moneylineToProb(ml);              // prob THIS team WINS
+          if (mlProb != null) lossProb = (lossProb + (1 - mlProb)) / 2;
+
+          // opponent strength nudge: strong opponent (high win%) makes losing likelier
+          if (oppWinPct != null) lossProb += (oppWinPct - 0.5) * 0.12;
+          // home/away nudge: road teams lose a touch more often
+          if (side === "away") lossProb += 0.02;
+
+          lossProb = Math.max(0.02, Math.min(0.98, lossProb));
+
+          teams.push({
+            ab, name: t.team?.shortDisplayName || ab,
+            oppAb: opp.team?.abbreviation, oppName: opp.team?.shortDisplayName || opp.team?.abbreviation,
+            side, teamSpread, when, date: dt ? dt.getTime() : 0,
+            score: Math.round(lossProb * 100),
+          });
+        });
+    });
+
+    if (!teams.length) {
       body.outerHTML = `<div class="matchup-empty">No matchups posted yet for Week ${week}.</div>`;
       return;
     }
 
-    const rows = games.map(g => `
-      <div class="matchup">
-        <div class="mteams">
-          <div class="mrow"><span class="mabbr">${g.awayName}</span><span class="mtag">@</span></div>
-          <div class="mrow"><span class="mabbr">${g.homeName}</span><span class="mtag home">HOME</span></div>
-        </div>
-        <div class="mline">
-          <div class="mspread">${g.line}</div>
-          <div class="mwhen">${g.when}</div>
-        </div>
-      </div>`).join("");
+    // stash for sorting, render score-sorted by default
+    window._blTeams = teams;
+    document.getElementById("blcontrols").style.display = "flex";
+    renderBestLosers("score");
 
-    body.outerHTML = `<div class="matchup-list">${rows}</div>
-      <div class="matchup-note">Lines from ESPN. Negative number = favorite. Bet against the favorite's opponent for a safer "loser."</div>`;
+    // wire sort buttons
+    panel.querySelectorAll(".bl-sort").forEach(b => {
+      b.onclick = () => {
+        panel.querySelectorAll(".bl-sort").forEach(x => x.classList.toggle("active", x === b));
+        renderBestLosers(b.dataset.sort);
+      };
+    });
   } catch (e) {
-    body.outerHTML = `<div class="matchup-empty">Couldn't load matchups (${e.message}).</div>`;
+    body.outerHTML = `<div class="matchup-empty">Couldn't load Best Losers (${e.message}).</div>`;
   }
+}
+
+function renderBestLosers(sortBy) {
+  const panel = document.getElementById("matchups");
+  if (!panel || !window._blTeams) return;
+  const teams = window._blTeams.slice();
+  if (sortBy === "time") teams.sort((a, b) => a.date - b.date || b.score - a.score);
+  else teams.sort((a, b) => b.score - a.score || a.date - b.date);
+
+  const scoreColor = (s) => s >= 65 ? "var(--live)" : s >= 50 ? "var(--gold)" : "var(--ink-faint)";
+  const spreadTxt = (t) => t.teamSpread == null ? "—"
+    : t.teamSpread > 0 ? `+${t.teamSpread} dog` : t.teamSpread < 0 ? `${t.teamSpread} fav` : "PK";
+
+  const rows = teams.map(t => `
+    <div class="bl-row">
+      <div class="bl-score" style="color:${scoreColor(t.score)}">${t.score}</div>
+      <div class="bl-team">
+        <div class="bl-name">${t.name} <span class="bl-side">${t.side === "away" ? "@" : "vs"} ${t.oppName}</span></div>
+        <div class="bl-meta">${spreadTxt(t)} · ${t.when}</div>
+      </div>
+    </div>`).join("");
+
+  const existing = panel.querySelector(".matchup-list, .matchup-loading, .matchup-empty");
+  const html = `<div class="matchup-list">${rows}</div>
+    <div class="matchup-note">Loser score = chance this team loses, from Vegas lines + opponent strength.
+      Higher is a safer "loser" pick. Lines already bake in injuries, QB, rest & weather.</div>`;
+  if (existing) existing.outerHTML = html;
+  else panel.insertAdjacentHTML("beforeend", html);
 }
 
 // ---- Boot ----
