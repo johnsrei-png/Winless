@@ -755,6 +755,7 @@
   .pw-actions { display: flex; gap: 10px; justify-content: center; }
   .pw-reset-row { display: flex; gap: 10px; align-items: center; }
   .pw-reset-row .pw-input { flex: 1; }
+  .dead-note { color: var(--ink-faint); font-style: italic; margin-top: 10px; }
 
   .pot-strip {
     display: flex; align-items: center; gap: 12px;
@@ -1188,11 +1189,27 @@ async function renderWeek() {
   const wk = weeks[0];
   const picksReq = wk.picks_required;
 
-  // existing submission + picks for me this week
-  const [subs, myPicks] = await Promise.all([
+  // existing submission + picks for me this week + assignment history (to block dead teams)
+  const [subs, myPicks, allAssigns, entries] = await Promise.all([
     sbGet(`submissions?week_number=eq.${wk.week_number}`),
     sbGet(`picks?week_number=eq.${wk.week_number}&player_id=eq.${ME}&order=rank.asc`),
+    sbGet(`assignments?order=week_number.asc`).catch(() => []),
+    sbGet(`entries?order=id.asc`).catch(() => []),
   ]);
+
+  // A team is "dead" for picking if EVERY entry has already used it in a prior week —
+  // it can't be placed anywhere, so block it on the selection screen.
+  const entryIds = (entries || []).map(e => e.id);
+  const entriesUsingTeam = {};  // team -> Set(entryId)
+  (allAssigns || []).forEach(a => {
+    (entriesUsingTeam[a.team] ||= new Set()).add(a.entry_id);
+  });
+  const deadTeams = new Set();
+  if (entryIds.length) {
+    Object.entries(entriesUsingTeam).forEach(([team, set]) => {
+      if (entryIds.every(id => set.has(id))) deadTeams.add(team);
+    });
+  }
 
   const submittedBy = new Set(subs.filter(s => s.submitted).map(s => s.player_id));
   const iSubmitted = submittedBy.has(ME);
@@ -1271,8 +1288,10 @@ async function renderWeek() {
   for (let r = 1; r <= picksReq; r++) {
     const pts = picksReq - r + 1;
     const chosen = existing[r] || "";
+    // hide teams used by every entry (dead), unless it's the one already saved in this slot
+    const teamOpts = TEAMS.filter(([ab]) => !deadTeams.has(ab) || ab === chosen);
     const opts = [`<option value="" ${chosen ? "" : "selected"}>— pick a team —</option>`]
-      .concat(TEAMS.map(([ab, nm]) =>
+      .concat(teamOpts.map(([ab, nm]) =>
         `<option value="${ab}" ${chosen === ab ? "selected" : ""}>${nm}</option>`)).join("");
     slots += `
       <div class="slot">
@@ -1290,6 +1309,8 @@ async function renderWeek() {
           Rank 1 is worth ${picksReq} points, down to 1 point at the bottom. Your points get summed with
           Tyler's and Kurt's to build the master ranking${iSubmitted ? " — resubmitting resets your submission time, which breaks ties for weekly wins and the pot." : "."}</p>
         <div class="rank-list">${slots}</div>
+        ${deadTeams.size ? `<p class="hint dead-note">Hidden — used by all six entries, can't be placed anywhere:
+          ${[...deadTeams].map(ab => TEAM_NAME[ab] || ab).sort().join(", ")}.</p>` : ""}
         <div class="submitbar">
           <button class="btn btn-primary" id="submit">${iSubmitted ? "Update my list" : "Submit my list"}</button>
           <span class="msg" id="msg"></span>
