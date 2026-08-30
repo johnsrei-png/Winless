@@ -1668,7 +1668,14 @@ async function computePot() {
     (firstSubByWeek[s.week_number] ||= {})[s.player_id] = s.first_submitted_at;
   });
   const seasonCorrect = {}; PLAYERS.forEach(p => seasonCorrect[p.id] = 0);
-  (picks || []).forEach(p => { if (p.result === "correct" && seasonCorrect[p.player_id] != null) seasonCorrect[p.player_id]++; });
+  const seasonConf = {}; PLAYERS.forEach(p => seasonConf[p.id] = 0);
+  (picks || []).forEach(p => {
+    if (p.result === "correct" && seasonCorrect[p.player_id] != null) {
+      seasonCorrect[p.player_id]++;
+      const req = reqByWeek[p.week_number] || 8;
+      seasonConf[p.player_id] += (req - p.rank + 1);
+    }
+  });
 
   const gradedWeekNums = [...new Set((picks || [])
     .filter(p => p.result && p.result !== "pending").map(p => p.week_number))].sort((a,b)=>a-b);
@@ -1712,8 +1719,8 @@ async function computePot() {
   const paidBy = {}; PLAYERS.forEach(p => paidBy[p.id] = 0);
   allContribs.forEach(c => { if (paidBy[c.player_id] != null) paidBy[c.player_id] += c.amount; });
 
-  const winsRanked = PLAYERS.map(p => ({ id: p.id, wins: weeklyWins[p.id], seasonCorrect: seasonCorrect[p.id] }))
-    .sort((a,b)=> b.wins-a.wins || b.seasonCorrect-a.seasonCorrect);
+  const winsRanked = PLAYERS.map(p => ({ id: p.id, wins: weeklyWins[p.id], seasonCorrect: seasonCorrect[p.id], conf: seasonConf[p.id] }))
+    .sort((a,b)=> b.wins-a.wins || b.seasonCorrect-a.seasonCorrect || b.conf-a.conf);
   const potLeader = winsRanked[0] || null;
   const potTied = potLeader ? winsRanked.filter(w => w.wins === potLeader.wins && potLeader.wins > 0) : [];
 
@@ -1966,8 +1973,9 @@ async function renderStandings() {
           </div>`).join("")}
       </div>
       <p class="field-note">The pot fills $${WEEKLY_ANTE} each week from whoever had the <b>worst</b> record
-        (confidence, then latest submission, breaks ties), plus every 💀 penalty tile peeled. At season's end it's
-        <b>winner-take-all</b> to whoever won the most individual weeks.</p>
+        (confidence, then latest submission, breaks ties), plus every 💀 penalty tile peeled. At season's end
+        the whole pot is <b>winner-take-all</b> to whoever won the <b>most weekly wins</b> — ties broken by
+        overall season record, then total confidence.</p>
     </div>`;
 
   // per-player peel breakdown for the drill-down
