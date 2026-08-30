@@ -1651,13 +1651,17 @@ function renderFieldIntel(field, week) {
 const WEEKLY_ANTE = 2;
 
 async function computePot() {
-  const [picks, weeks, subs, potLedger] = await Promise.all([
+  const [picks, weeks, subs, potLedger, peels, tileValues] = await Promise.all([
     sbGet(`picks?order=week_number.asc`).catch(() => []),
     sbGet(`weeks?order=week_number.asc`).catch(() => []),
     sbGet(`submissions?order=week_number.asc`).catch(() => []),
     sbGet(`pot_ledger?order=id.asc`).catch(() => []),
+    sbGet(`peels?order=created_at.asc`).catch(() => []),
+    sbGet(`tile_values?order=tile_index.asc`).catch(() => []),
   ]);
   const reqByWeek = {}; (weeks || []).forEach(w => reqByWeek[w.week_number] = w.picks_required);
+  const typeByTile = {}, valueByTile = {};
+  (tileValues || []).forEach(t => { typeByTile[t.tile_index] = t.type || "money"; valueByTile[t.tile_index] = Number(t.amount); });
   const firstSubByWeek = {};
   (subs || []).forEach(s => {
     if (!s.first_submitted_at) return;
@@ -1691,8 +1695,19 @@ async function computePot() {
     if (worst) potFromPenalty.push({ player_id: worst.id, amount: WEEKLY_ANTE, week: wk });
   });
 
-  const potTileContribs = (potLedger || []).map(r => ({ player_id: r.player_id, amount: Number(r.amount) }));
-  const allContribs = [...potFromPenalty, ...potTileContribs];
+  // penalty/pot tile contributions — derive straight from peels (robust to old data
+  // that predates pot_ledger writes). Use stored |effective| when present, else tile base.
+  const penaltyContribs = (peels || []).filter(p => {
+    const t = typeByTile[p.tile_index] || "money";
+    return t === "negative" || t === "pot";
+  }).map(p => {
+    const amt = (p.effective != null && Number(p.effective) !== 0)
+      ? Math.abs(Number(p.effective))
+      : (valueByTile[p.tile_index] || 0);
+    return { player_id: p.player_id, amount: amt };
+  });
+
+  const allContribs = [...potFromPenalty, ...penaltyContribs];
   const potTotal = allContribs.reduce((s,c)=> s + c.amount, 0);
   const paidBy = {}; PLAYERS.forEach(p => paidBy[p.id] = 0);
   allContribs.forEach(c => { if (paidBy[c.player_id] != null) paidBy[c.player_id] += c.amount; });
@@ -1822,11 +1837,12 @@ async function renderStandings() {
   (tileValues || []).forEach(t => { valueByTile[t.tile_index] = Number(t.amount); typeByTile[t.tile_index] = t.type || "money"; });
 
   // per-peel effective signed amount (what EACH other player owes the peeler).
-  // Negatives now pay the POT, not other players, so they contribute 0 to the player ledger.
+  // Negatives/pot tiles pay the POT, never other players — force them to 0 here
+  // regardless of any legacy stored `effective` (older peels predate this rule).
   const effOf = (p) => {
-    if (p.effective != null) return Number(p.effective);
     const type = typeByTile[p.tile_index] || "money";
     if (type === "multiplier" || type === "negative" || type === "pot") return 0;
+    if (p.effective != null) return Number(p.effective);
     return valueByTile[p.tile_index] || 0;
   };
 
@@ -1896,8 +1912,18 @@ async function renderStandings() {
     if (worst) potFromPenalty.push({ player_id: worst.id, amount: WEEKLY_ANTE, week: wk });
   });
 
-  // pot-tile contributions from the ledger table
-  const potTileContribs = (potLedger || []).map(r => ({ player_id: r.player_id, amount: Number(r.amount), week: r.week_number, reason: r.reason || "pot tile" }));
+  // penalty/pot tile contributions — derive straight from peels (robust to old data
+  // that predates pot_ledger writes). Use stored |effective| when present, else tile base.
+  const potTileContribs = (peels || []).filter(p => {
+    const t = typeByTile[p.tile_index] || "money";
+    return t === "negative" || t === "pot";
+  }).map(p => {
+    const amt = (p.effective != null && Number(p.effective) !== 0)
+      ? Math.abs(Number(p.effective))
+      : (valueByTile[p.tile_index] || 0);
+    const t = typeByTile[p.tile_index] || "money";
+    return { player_id: p.player_id, amount: amt, week: p.week_number, reason: t === "negative" ? "penalty tile" : "pot tile" };
+  });
 
   // combine contributions
   const allContribs = [
