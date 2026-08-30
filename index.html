@@ -458,6 +458,12 @@
   .wk-grid td .rec { color: var(--ink); }
   .wk-grid td .cf { color: var(--ink-faint); font-size: 11px; }
   .wk-grid tr:last-child td { border-bottom: none; }
+  .wk-grid td.wk-win { background: rgba(245,196,81,0.10); position: relative; }
+  .wk-grid td.wk-win .rec { color: var(--gold); font-weight: 700; }
+  .wk-grid td.wk-win .cf { color: rgba(245,196,81,0.7); }
+  .wk-grid td.wk-win .wk-crown {
+    position: absolute; top: 3px; right: 5px; font-size: 10px; color: var(--gold); line-height: 1;
+  }
 
   /* ---- Lock button ---- */
   .lockbar {
@@ -2066,10 +2072,21 @@ async function renderStandings() {
   const playedWeeks = [...new Set(picks.map(p => p.week_number))].sort((a,b)=>a-b);
   const gridHead = `<tr><th class="name">Week</th>${ranked.map(r=>`<th>${r.name}</th>`).join("")}</tr>`;
   const gridBody = playedWeeks.map(wk => {
+    // determine this week's winner: most correct → confidence → earliest submission
+    const contenders = ranked
+      .map(r => ({ id: r.id, w: weekly[r.id][wk] }))
+      .filter(x => x.w)
+      .map(x => ({ id: x.id, correct: x.w.correct, conf: x.w.conf, sub: (firstSubByWeek[wk]?.[x.id]) || "9999" }));
+    const winner = contenders.length
+      ? contenders.slice().sort((a,b)=> b.correct-a.correct || b.conf-a.conf || a.sub.localeCompare(b.sub))[0]
+      : null;
+    // only highlight if the week is actually decided (someone has a non-zero record or it's graded)
+    const decided = contenders.some(c => c.correct > 0 || c.conf > 0);
     const cells = ranked.map(r => {
       const w = weekly[r.id][wk];
       if (!w) return `<td><span class="cf">—</span></td>`;
-      return `<td><span class="rec">${w.correct}-${w.incorrect}</span><br><span class="cf">${w.conf} cf</span></td>`;
+      const isWin = decided && winner && winner.id === r.id;
+      return `<td class="${isWin ? "wk-win" : ""}">${isWin ? `<span class="wk-crown">★</span>` : ""}<span class="rec">${w.correct}-${w.incorrect}</span><br><span class="cf">${w.conf} cf</span></td>`;
     }).join("");
     return `<tr><td class="name">Week ${wk}</td>${cells}</tr>`;
   }).join("");
