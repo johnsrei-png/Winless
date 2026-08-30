@@ -740,6 +740,22 @@
   }
   .locked-warn b { color: var(--gold); }
 
+  /* ---- Password / auth UI ---- */
+  .gate-sub { color: var(--ink-dim); font-size: 14px; margin: -6px 0 18px; }
+  .lockic { font-size: 11px; opacity: 0.6; }
+  .pw-box { max-width: 340px; margin: 0 auto; display: flex; flex-direction: column; gap: 12px; }
+  .pw-input {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 12px 14px; color: var(--ink); font-size: 15px; font-family: inherit; width: 100%;
+  }
+  .pw-input:focus { outline: none; border-color: var(--gold); }
+  .pw-remember { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-dim); cursor: pointer; }
+  .pw-remember input { width: auto; }
+  .pw-msg { color: var(--alert); font-size: 13px; min-height: 16px; }
+  .pw-actions { display: flex; gap: 10px; justify-content: center; }
+  .pw-reset-row { display: flex; gap: 10px; align-items: center; }
+  .pw-reset-row .pw-input { flex: 1; }
+
   .pot-strip {
     display: flex; align-items: center; gap: 12px;
     background: linear-gradient(90deg, rgba(245,196,81,0.12), rgba(245,196,81,0.02));
@@ -911,6 +927,29 @@ const sbUpsert = (table, rows, onConflict) =>
 // ---- State ----
 let ME = localStorage.getItem("winless_player") || null;
 let PLAYERS = [];
+
+// --- Password auth (light protection: keeps friends honest, not bank-grade) ---
+// Hash with the browser's built-in SubtleCrypto (SHA-256). Not sitting in plain text.
+async function hashPassword(pw) {
+  const data = new TextEncoder().encode("winless::" + pw);
+  const buf = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+// A device is "remembered" for a player if this token matches their current hash.
+function savedAuthFor(pid) {
+  try { return JSON.parse(localStorage.getItem("winless_auth") || "{}")[pid] || null; }
+  catch { return null; }
+}
+function rememberAuth(pid, hash) {
+  let m = {}; try { m = JSON.parse(localStorage.getItem("winless_auth") || "{}"); } catch {}
+  m[pid] = hash;
+  localStorage.setItem("winless_auth", JSON.stringify(m));
+}
+function clearAuth(pid) {
+  let m = {}; try { m = JSON.parse(localStorage.getItem("winless_auth") || "{}"); } catch {}
+  delete m[pid];
+  localStorage.setItem("winless_auth", JSON.stringify(m));
+}
 let BOARD_EDIT_MODE = false;
 let MY_PREFS = null;   // { theme, accent, bg, font } for the signed-in player
 
@@ -991,17 +1030,49 @@ function renderWhoami() {
   if (ME && PLAYERS.length) {
     const p = PLAYERS.find(x => x.id === ME);
     whoami.innerHTML = `Signed in as <b>${p ? p.name : ME}</b><br>
-      <a id="switch">switch player</a> · <a id="themelink">theme</a> · <a id="commish">commish</a>`;
+      <a id="switch">switch player</a> · <a id="pwlink">password</a> · <a id="themelink">theme</a> · <a id="commish">commish</a>`;
     document.getElementById("switch").onclick = () => {
+      // sign out of this session; also forget this device so the next sign-in needs the password
+      clearAuth(ME);
       localStorage.removeItem("winless_player");
       ME = null;
       boot();
     };
+    document.getElementById("pwlink").onclick = changeMyPassword;
     document.getElementById("themelink").onclick = openThemeEditor;
     document.getElementById("commish").onclick = openCommish;
   } else {
     whoami.innerHTML = "";
   }
+}
+
+// Set or change your own password from the menu.
+async function changeMyPassword() {
+  const p = PLAYERS.find(x => x.id === ME);
+  if (!p) return;
+  if (p.password_hash) {
+    const cur = prompt("Enter your current password to change it:");
+    if (cur == null) return;
+    if (await hashPassword(cur) !== p.password_hash) { alert("That's not your current password."); return; }
+  }
+  const nw = prompt(p.password_hash ? "Enter a new password:" : "Set a password:");
+  if (nw == null) return;
+  if (!nw) {
+    // blank = clear password (back to open sign-in)
+    if (!confirm("Blank password will remove password protection for your profile. Continue?")) return;
+    try {
+      await sb(`players?id=eq.${ME}`, { method: "PATCH", body: JSON.stringify({ password_hash: null }) });
+      p.password_hash = null; clearAuth(ME);
+      alert("Password removed.");
+    } catch (e) { alert("Couldn't update: " + e.message); }
+    return;
+  }
+  const hash = await hashPassword(nw);
+  try {
+    await sb(`players?id=eq.${ME}`, { method: "PATCH", body: JSON.stringify({ password_hash: hash }) });
+    p.password_hash = hash; rememberAuth(ME, hash);
+    alert("Password updated. This device stays remembered.");
+  } catch (e) { alert("Couldn't update: " + e.message); }
 }
 
 // ---- Name select gate ----
@@ -1014,16 +1085,92 @@ function renderGate() {
     <div class="gate">
       <h2>Who's picking?</h2>
       <div class="name-grid">
-        ${PLAYERS.map(p => `<button class="name-btn" data-id="${p.id}">${p.name}</button>`).join("")}
+        ${PLAYERS.map(p => `<button class="name-btn" data-id="${p.id}">${p.name}${p.password_hash ? ' <span class="lockic">🔒</span>' : ''}</button>`).join("")}
       </div>
     </div>`;
   app.querySelectorAll(".name-btn").forEach(btn => {
-    btn.onclick = () => {
-      ME = btn.dataset.id;
-      localStorage.setItem("winless_player", ME);
-      boot();
-    };
+    btn.onclick = () => beginSignIn(btn.dataset.id);
   });
+}
+
+// Step 2 of sign-in: after a name is chosen, handle password set / enter / remembered.
+function beginSignIn(pid) {
+  const p = PLAYERS.find(x => x.id === pid);
+  if (!p) return;
+
+  // no password set yet → let them in, then prompt to create one
+  if (!p.password_hash) {
+    finishSignIn(pid, { promptSetPassword: true });
+    return;
+  }
+  // remembered on this device (saved hash still matches) → straight in
+  if (savedAuthFor(pid) === p.password_hash) {
+    finishSignIn(pid);
+    return;
+  }
+  // otherwise ask for the password
+  renderPasswordPrompt(p);
+}
+
+function renderPasswordPrompt(p) {
+  app.innerHTML = `
+    <div class="gate">
+      <h2>${p.name}</h2>
+      <p class="gate-sub">Enter your password to sign in.</p>
+      <div class="pw-box">
+        <input type="password" id="pwin" class="pw-input" placeholder="Password" autocomplete="current-password" />
+        <label class="pw-remember"><input type="checkbox" id="pwremember" checked /> Remember me on this device</label>
+        <div class="pw-msg" id="pwmsg"></div>
+        <div class="pw-actions">
+          <button class="btn btn-ghost" id="pwback">Back</button>
+          <button class="btn btn-primary" id="pwgo">Sign in</button>
+        </div>
+      </div>
+    </div>`;
+  const input = document.getElementById("pwin");
+  input.focus();
+  const submit = async () => {
+    const msg = document.getElementById("pwmsg");
+    const hash = await hashPassword(input.value);
+    if (hash === p.password_hash) {
+      if (document.getElementById("pwremember").checked) rememberAuth(p.id, hash);
+      else clearAuth(p.id);
+      finishSignIn(p.id);
+    } else {
+      msg.textContent = "Wrong password — try again.";
+      input.value = ""; input.focus();
+    }
+  };
+  document.getElementById("pwgo").onclick = submit;
+  input.onkeydown = (e) => { if (e.key === "Enter") submit(); };
+  document.getElementById("pwback").onclick = renderGate;
+}
+
+// Finalize: set ME, remember the name, boot. Optionally prompt to create a password.
+function finishSignIn(pid, opts = {}) {
+  ME = pid;
+  localStorage.setItem("winless_player", ME);
+  if (opts.promptSetPassword) window._promptSetPassword = true;
+  boot();
+}
+
+// Prompt (once, after boot) for players who have no password yet.
+async function maybePromptSetPassword() {
+  if (!window._promptSetPassword) return;
+  window._promptSetPassword = false;
+  const p = PLAYERS.find(x => x.id === ME);
+  if (!p || p.password_hash) return;
+  const pw = prompt(`Set a password for "${p.name}" so only you can sign in as you.\n\n(Leave blank to skip for now — you can set one later from the menu.)`);
+  if (!pw) return;
+  const hash = await hashPassword(pw);
+  try {
+    await sb(`players?id=eq.${ME}`, { method: "PATCH", body: JSON.stringify({ password_hash: hash }) });
+    p.password_hash = hash;
+    rememberAuth(ME, hash);   // this device is trusted now
+    alert("Password set. You'll be asked for it when signing in on a new device.");
+  } catch (e) {
+    alert("Couldn't save password: " + e.message);
+  }
 }
 
 // ---- Pick submission screen ----
@@ -2354,6 +2501,18 @@ async function commishTools(overlay) {
     </div>
 
     <div class="modal-section">
+      <h3>Reset a player's password</h3>
+      <p>Clears a player's password so they can sign in freely and set a new one. Use if someone gets locked out.</p>
+      <div class="pw-reset-row">
+        <select id="pwresetsel" class="pw-input">
+          ${PLAYERS.map(p => `<option value="${p.id}">${p.name}${p.password_hash ? "" : " (no password)"}</option>`).join("")}
+        </select>
+        <button class="btn btn-ghost" id="pwresetbtn">Clear password</button>
+      </div>
+      <span class="msg" id="pwresetmsg"></span>
+    </div>
+
+    <div class="modal-section">
       <h3>Reset season</h3>
       <p>Wipes all picks, submissions, assignments, field imports, results, weeks, and peels.
         Players and the six entries stay (entries reset to alive). <b>Can't be undone.</b></p>
@@ -2363,6 +2522,22 @@ async function commishTools(overlay) {
       </div>
       <span class="msg" id="resetmsg"></span>
     </div>`;
+
+  // password reset
+  modal.querySelector("#pwresetbtn").onclick = async () => {
+    const msg = modal.querySelector("#pwresetmsg");
+    const pid = modal.querySelector("#pwresetsel").value;
+    const nm = PLAYERS.find(p => p.id === pid)?.name || pid;
+    if (!confirm(`Clear ${nm}'s password? They'll be able to sign in without one and set a new password.`)) return;
+    try {
+      await sb(`players?id=eq.${pid}`, { method: "PATCH", body: JSON.stringify({ password_hash: null }) });
+      const pp = PLAYERS.find(p => p.id === pid); if (pp) pp.password_hash = null;
+      clearAuth(pid);
+      msg.className = "msg ok"; msg.textContent = `${nm}'s password cleared.`;
+    } catch (e) {
+      msg.className = "msg err"; msg.textContent = "Couldn't clear: " + e.message;
+    }
+  };
 
   // auto-sync picks default when entries changes
   const entriesInput = modal.querySelector("#wkentries");
@@ -2841,13 +3016,21 @@ async function boot() {
     document.getElementById("tabs").style.display = "none";
     renderGate();
   } else {
+    // enforce password: if this player has one set but this device isn't remembered,
+    // bounce to the password prompt instead of trusting the saved name.
+    const meP = PLAYERS.find(p => p.id === ME);
+    if (meP.password_hash && savedAuthFor(ME) !== meP.password_hash && !window._promptSetPassword) {
+      document.getElementById("tabs").style.display = "none";
+      renderPasswordPrompt(meP);
+      return;
+    }
     // load this player's saved theme prefs and apply
-    const me = PLAYERS.find(p => p.id === ME);
-    MY_PREFS = me && me.prefs ? (typeof me.prefs === "string" ? JSON.parse(me.prefs) : me.prefs) : null;
+    MY_PREFS = meP && meP.prefs ? (typeof meP.prefs === "string" ? JSON.parse(meP.prefs) : meP.prefs) : null;
     applyTheme(MY_PREFS);
     document.getElementById("tabs").style.display = "flex";
     wireTabs();
     routeTab();
+    maybePromptSetPassword();
   }
 }
 
