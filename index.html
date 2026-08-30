@@ -733,6 +733,12 @@
     background: transparent; border: 1px solid var(--line); color: var(--ink-dim);
   }
   .btn-ghost:hover { border-color: var(--ink-faint); color: var(--ink); }
+  .locked-warn {
+    margin-top: 16px; font-size: 12px; line-height: 1.5; color: var(--ink-faint);
+    background: rgba(245,196,81,0.06); border: 1px solid rgba(245,196,81,0.18);
+    border-radius: 9px; padding: 10px 14px;
+  }
+  .locked-warn b { color: var(--gold); }
 
   .pot-strip {
     display: flex; align-items: center; gap: 12px;
@@ -1096,9 +1102,14 @@ async function renderWeek() {
           <button class="btn btn-ghost" id="editpicks">Unlock &amp; edit my list</button>
           ${allIn ? `<button class="btn btn-lock" id="lockweek">Lock week &amp; reveal</button>` : ""}
         </div>
+        <div class="locked-warn">⚠️ Editing resubmits your list and <b>resets your submission time</b>,
+          which is the tiebreaker for weekly wins and the pot. Only edit if you need to change a pick.</div>
       </div>`;
 
-    document.getElementById("editpicks").onclick = () => { window._pickEditMode = true; renderWeek(); };
+    document.getElementById("editpicks").onclick = () => {
+      if (!confirm("Editing resubmits your list and resets your submission time — the tiebreaker for weekly wins and the pot. Continue?")) return;
+      window._pickEditMode = true; renderWeek();
+    };
     const lockBtn2 = document.getElementById("lockweek");
     if (lockBtn2) lockBtn2.onclick = () => lockWeek(wk);
     return;
@@ -1130,7 +1141,7 @@ async function renderWeek() {
         <div class="section-title">Your ranked losers — most confident at the top</div>
         <p class="hint">Pick ${picksReq} different teams you think will lose this week, ranked by confidence.
           Rank 1 is worth ${picksReq} points, down to 1 point at the bottom. Your points get summed with
-          Tyler's and Kurt's to build the master ranking${iSubmitted ? " — resubmit any time before lock to change your list." : "."}</p>
+          Tyler's and Kurt's to build the master ranking${iSubmitted ? " — resubmitting resets your submission time, which breaks ties for weekly wins and the pot." : "."}</p>
         <div class="rank-list">${slots}</div>
         <div class="submitbar">
           <button class="btn btn-primary" id="submit">${iSubmitted ? "Update my list" : "Submit my list"}</button>
@@ -1206,11 +1217,12 @@ async function submitPicks(wk, picksReq) {
     }));
     await sb("picks", { method: "POST", body: JSON.stringify(rows) });
 
-    // record submission; stamp first_submitted_at ONLY the first time (never overwrite)
-    const existing = await sbGet(`submissions?week_number=eq.${wk.week_number}&player_id=eq.${ME}`);
-    const alreadyHasFirst = existing && existing.length && existing[0].first_submitted_at;
-    const subRow = { week_number: wk.week_number, player_id: ME, submitted: true };
-    if (!alreadyHasFirst) subRow.first_submitted_at = new Date().toISOString();
+    // record submission; stamp the submission time on EVERY submit.
+    // Editing/resubmitting resets it — this time is the tiebreaker in standings.
+    const subRow = {
+      week_number: wk.week_number, player_id: ME, submitted: true,
+      first_submitted_at: new Date().toISOString(),
+    };
     await sbUpsert("submissions", [subRow], "week_number,player_id");
 
     msg.className = "msg ok";
