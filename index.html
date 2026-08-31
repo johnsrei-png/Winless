@@ -3245,6 +3245,15 @@ async function fetchConsensusOdds() {
 async function loadMatchups(week) {
   const panel = document.getElementById("matchups");
   if (!panel) return;
+
+  // Already built for this same week and still in the DOM? Leave it completely
+  // untouched — re-rendering would collapse any row the user has expanded to read
+  // the math, and the lines don't change minute-to-minute. Only rebuild on a real
+  // week change or first load.
+  if (window._blWeek === week && panel.querySelector(".matchup-list")) {
+    return;
+  }
+
   const body = panel.querySelector(".matchup-loading");
   try {
     // consensus multi-book odds (from our Netlify function) — sharper than ESPN's single line
@@ -3370,6 +3379,7 @@ async function loadMatchups(week) {
 
     // stash for sorting, render score-sorted by default
     window._blTeams = teams;
+    window._blWeek = week;
     document.getElementById("blcontrols").style.display = "flex";
     renderBestLosers("score");
 
@@ -3426,7 +3436,8 @@ function renderBestLosers(sortBy) {
       const d = panel.querySelector(`.bl-detail[data-bld="${i}"]`);
       const caret = row.querySelector(".bl-caret");
       if (!d) return;
-      const open = d.style.display !== "none";
+      const open = d.classList.contains("open");
+      d.classList.toggle("open", !open);
       d.style.display = open ? "none" : "block";
       if (caret) caret.textContent = open ? "▸" : "▾";
     };
@@ -3507,6 +3518,13 @@ function userIsBusy() {
   if (ae && (ae.tagName === "INPUT" || ae.tagName === "SELECT" || ae.tagName === "TEXTAREA")) return true;
   if (document.querySelector(".modal-overlay")) return true;
   if (document.querySelector("input.pid-edit")) return true;
+  // reading an expanded Best Loser breakdown or availability drill-down — don't
+  // rebuild the week screen out from under them (it would collapse what they opened)
+  if (CURRENT_TAB === "week") {
+    if (document.querySelector(".bl-detail.open")) return true;
+    const drill = document.getElementById("umdrill");
+    if (drill && drill.style.display === "block") return true;
+  }
   // editing an already-submitted list — don't collapse it out from under them
   if (CURRENT_TAB === "week" && window._pickEditMode) return true;
   // on the pick screen, don't clobber unsaved in-progress selections.
