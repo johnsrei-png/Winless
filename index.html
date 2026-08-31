@@ -784,6 +784,19 @@
   .bl-name { font-weight: 600; font-size: 14px; }
   .bl-side { color: var(--ink-faint); font-weight: 400; font-size: 12px; }
   .bl-meta { font-size: 11px; color: var(--ink-faint); font-family: 'Barlow Semi Condensed', sans-serif; margin-top: 1px; }
+  .bl-row { cursor: pointer; }
+  .bl-row:hover { background: var(--panel-2); }
+  .bl-caret { font-size: 10px; color: var(--ink-faint); }
+  .bl-detail { background: var(--panel-2); border-bottom: 1px solid var(--line); padding: 8px 12px 10px 50px; }
+  .bl-step {
+    display: flex; justify-content: space-between; align-items: center; gap: 12px;
+    font-size: 12px; color: var(--ink-dim); padding: 4px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+  }
+  .bl-step:last-child { border-bottom: none; }
+  .bl-step-v { color: var(--ink); font-family: 'Barlow Semi Condensed', sans-serif; white-space: nowrap; }
+  .bl-step-total { margin-top: 3px; padding-top: 7px; border-top: 1px solid var(--line); }
+  .bl-step-total .bl-step-v { color: var(--gold); }
 
   /* ---- Team availability matrix ---- */
   .usage-matrix { margin-top: 22px; }
@@ -3208,17 +3221,36 @@ async function loadMatchups(week) {
           let teamSpread = null;
           if (spreadMag != null && favAbbr) teamSpread = (ab === favAbbr) ? -spreadMag : spreadMag;
 
+          const steps = [];   // human-readable breakdown of the score
+
           // base loss prob from spread
           let lossProb = teamSpread != null ? spreadToLossProb(teamSpread) : 0.5;
+          if (teamSpread != null) {
+            steps.push({ label: `Spread ${teamSpread > 0 ? "+" + teamSpread + " (underdog)" : teamSpread + " (favorite)"}`, val: `${Math.round(lossProb*100)}% base` });
+          } else {
+            steps.push({ label: "No spread posted", val: "50% base" });
+          }
 
           // blend in moneyline-implied loss prob when available (average the two)
           const mlProb = moneylineToProb(ml);              // prob THIS team WINS
-          if (mlProb != null) lossProb = (lossProb + (1 - mlProb)) / 2;
+          if (mlProb != null) {
+            const before = lossProb;
+            lossProb = (lossProb + (1 - mlProb)) / 2;
+            steps.push({ label: `Moneyline ${ml > 0 ? "+" + ml : ml}`, val: `blended → ${Math.round(lossProb*100)}%` });
+          }
 
           // opponent strength nudge: strong opponent (high win%) makes losing likelier
-          if (oppWinPct != null) lossProb += (oppWinPct - 0.5) * 0.12;
+          if (oppWinPct != null) {
+            const adj = (oppWinPct - 0.5) * 0.12;
+            lossProb += adj;
+            const pct = Math.round(oppWinPct * 100);
+            steps.push({ label: `Opponent strength (${pct}% win)`, val: `${adj >= 0 ? "+" : ""}${Math.round(adj*100)}%` });
+          }
           // home/away nudge: road teams lose a touch more often
-          if (side === "away") lossProb += 0.02;
+          if (side === "away") {
+            lossProb += 0.02;
+            steps.push({ label: "Road team", val: "+2%" });
+          }
 
           lossProb = Math.max(0.02, Math.min(0.98, lossProb));
 
@@ -3226,7 +3258,7 @@ async function loadMatchups(week) {
             ab, name: t.team?.shortDisplayName || ab,
             oppAb: opp.team?.abbreviation, oppName: opp.team?.shortDisplayName || opp.team?.abbreviation,
             side, teamSpread, when, date: dt ? dt.getTime() : 0,
-            score: Math.round(lossProb * 100),
+            score: Math.round(lossProb * 100), steps,
           });
         });
     });
@@ -3264,21 +3296,38 @@ function renderBestLosers(sortBy) {
   const spreadTxt = (t) => t.teamSpread == null ? "—"
     : t.teamSpread > 0 ? `+${t.teamSpread} dog` : t.teamSpread < 0 ? `${t.teamSpread} fav` : "PK";
 
-  const rows = teams.map(t => `
-    <div class="bl-row">
+  const rows = teams.map((t, i) => `
+    <div class="bl-row" data-bl="${i}">
       <div class="bl-score" style="color:${scoreColor(t.score)}">${t.score}</div>
       <div class="bl-team">
-        <div class="bl-name">${t.name} <span class="bl-side">${t.side === "away" ? "@" : "vs"} ${t.oppName}</span></div>
+        <div class="bl-name">${t.name} <span class="bl-side">${t.side === "away" ? "@" : "vs"} ${t.oppName}</span> <span class="bl-caret">▸</span></div>
         <div class="bl-meta">${spreadTxt(t)} · ${t.when}</div>
       </div>
+    </div>
+    <div class="bl-detail" data-bld="${i}" style="display:none">
+      ${(t.steps || []).map(s => `<div class="bl-step"><span>${s.label}</span><span class="bl-step-v">${s.val}</span></div>`).join("")}
+      <div class="bl-step bl-step-total"><span><b>Loser score</b></span><span class="bl-step-v"><b>${t.score}</b></span></div>
     </div>`).join("");
 
   const existing = panel.querySelector(".matchup-list, .matchup-loading, .matchup-empty");
   const html = `<div class="matchup-list">${rows}</div>
     <div class="matchup-note">Loser score = chance this team loses, from Vegas lines + opponent strength.
-      Higher is a safer "loser" pick. Lines already bake in injuries, QB, rest & weather.</div>`;
+      Tap a team to see the math. Higher is a safer "loser" pick. Lines already bake in injuries, QB, rest & weather.</div>`;
   if (existing) existing.outerHTML = html;
   else panel.insertAdjacentHTML("beforeend", html);
+
+  // wire expand/collapse
+  panel.querySelectorAll(".bl-row").forEach(row => {
+    row.onclick = () => {
+      const i = row.dataset.bl;
+      const d = panel.querySelector(`.bl-detail[data-bld="${i}"]`);
+      const caret = row.querySelector(".bl-caret");
+      if (!d) return;
+      const open = d.style.display !== "none";
+      d.style.display = open ? "none" : "block";
+      if (caret) caret.textContent = open ? "▸" : "▾";
+    };
+  });
 }
 
 // ---- Boot ----
