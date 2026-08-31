@@ -988,6 +988,20 @@ const TEAMS = [
 ];
 const TEAM_NAME = Object.fromEntries(TEAMS.map(t => [t[0], t[1]]));
 
+// Static division map (doesn't change season to season) — used for divisional
+// game dampening: division rivals tend to play closer than the line implies,
+// thanks to familiarity, rivalry intensity, and travel-neutral scheduling.
+const TEAM_DIVISION = {
+  BUF: "AFCE", MIA: "AFCE", NE: "AFCE", NYJ: "AFCE",
+  BAL: "AFCN", CIN: "AFCN", CLE: "AFCN", PIT: "AFCN",
+  HOU: "AFCS", IND: "AFCS", JAX: "AFCS", TEN: "AFCS",
+  DEN: "AFCW", KC: "AFCW", LV: "AFCW", LAC: "AFCW",
+  DAL: "NFCE", NYG: "NFCE", PHI: "NFCE", WSH: "NFCE",
+  CHI: "NFCN", DET: "NFCN", GB: "NFCN", MIN: "NFCN",
+  ATL: "NFCS", CAR: "NFCS", NO: "NFCS", TB: "NFCS",
+  ARI: "NFCW", LAR: "NFCW", SF: "NFCW", SEA: "NFCW",
+};
+
 // ---- Supabase REST helpers ----
 async function sb(path, opts = {}) {
   const res = await fetch(`${SB_URL}/rest/v1/${path}`, {
@@ -3602,6 +3616,18 @@ async function loadMatchups(week) {
             }
           }
 
+          // divisional dampening: division rivals tend to play closer than the
+          // line implies (familiarity, rivalry, no travel/altitude surprises) —
+          // pull the loss probability a bit toward 50% for divisional games.
+          const oppDiv = oppAbbr ? TEAM_DIVISION[oppAbbr] : null;
+          const myDiv = TEAM_DIVISION[ab];
+          if (oppDiv && myDiv && oppDiv === myDiv) {
+            const before = lossProb;
+            lossProb = lossProb * 0.85 + 0.5 * 0.15;   // pull 15% of the way to a coin flip
+            const shift = lossProb - before;
+            steps.push({ label: "Divisional game (games run closer than the line)", val: `${shift >= 0 ? "+" : ""}${(shift*100).toFixed(1)}%` });
+          }
+
           lossProb = Math.max(0.02, Math.min(0.98, lossProb));
 
           teams.push({
@@ -3665,8 +3691,8 @@ function renderBestLosers(sortBy) {
   const existing = panel.querySelector(".matchup-list, .matchup-loading, .matchup-empty");
   const html = `<div class="matchup-list">${rows}</div>
     <div class="matchup-note">Loser score = chance this team loses. ${anyConsensus
-      ? "Built from <b>consensus multi-book moneylines</b> (vig removed) + spread + opponent power rating + rest."
-      : "Built from ESPN's line + opponent power rating + rest. (Add an Odds API key for sharper multi-book consensus.)"}
+      ? "Built from <b>consensus multi-book moneylines</b> (vig removed) + spread + opponent power rating + road performance + rest + divisional dampening."
+      : "Built from ESPN's line + opponent power rating + road performance + rest + divisional dampening. (Add an Odds API key for sharper multi-book consensus.)"}
       Tap a team to see the math. Lines already bake in injuries, QB, rest & weather.</div>`;
   if (existing) existing.outerHTML = html;
   else panel.insertAdjacentHTML("beforeend", html);
