@@ -827,6 +827,20 @@
   .um-part-sw { background: var(--gold); }
   .um-dead-sw { background: var(--ink-faint); opacity: 0.5; }
   .um-bye-sw { background: var(--line); }
+  .um-desc { margin: 0 0 10px 2px; }
+  .um-legend { margin-bottom: 14px; }
+  .um-cell { cursor: pointer; }
+  .um-cell:hover { outline: 1px solid var(--gold); outline-offset: -1px; }
+  .um-drill {
+    margin-top: 12px; background: var(--panel); border: 1px solid var(--line);
+    border-left: 3px solid var(--gold); border-radius: 10px; padding: 12px 14px;
+    font-size: 13px; color: var(--ink-dim); line-height: 1.7;
+  }
+  .um-drill b { color: var(--ink); }
+  .um-chip {
+    display: inline-block; background: var(--panel-2); border: 1px solid var(--line);
+    border-radius: 6px; padding: 2px 8px; margin: 2px 3px; font-size: 12px; color: var(--ink);
+  }
 
   .pot-strip {
     display: flex; align-items: center; gap: 12px;
@@ -1413,7 +1427,7 @@ async function renderWeek() {
   // load matchups + compute Best Loser scores from ESPN (client-side) into the side panel
   loadMatchups(wk.week_number);
   // build the forward-looking availability matrix under the picks
-  renderUsageMatrix(wk.week_number, entriesUsingTeam, liveEntryIds);
+  renderUsageMatrix(wk.week_number, entriesUsingTeam, liveEntryIds, entries);
 
   // prevent picking the same team twice — live dedupe styling
   const selects = () => Array.from(app.querySelectorAll("select.team"));
@@ -3060,7 +3074,7 @@ async function peelTile(tileIndex, week, typeByTile, valueByTile, multiplierArme
 //  Availability is constant across future weeks (until an entry uses it),
 //  so the per-week dimension exists to flag BYE weeks (team can't be picked).
 // ============================================================
-async function renderUsageMatrix(startWeek, entriesUsingTeam, liveEntryIds) {
+async function renderUsageMatrix(startWeek, entriesUsingTeam, liveEntryIds, entries) {
   const box = document.getElementById("usagematrix");
   if (!box) return;
 
@@ -3071,12 +3085,14 @@ async function renderUsageMatrix(startWeek, entriesUsingTeam, liveEntryIds) {
     TEAMS.map(([ab]) => (entriesUsingTeam[ab]?.size || 0)).join("");
   if (window._umSig === sig && window._umHtml) {
     box.innerHTML = window._umHtml;
+    wireMatrixDrilldown(box);
     return;
   }
 
   const loading = box.querySelector(".um-loading");
   const totalLive = liveEntryIds.length;
   const liveSet = new Set(liveEntryIds);
+  const labelOf = (id) => (entries || []).find(e => e.id === id)?.label || `Entry ${id}`;
   const WEEKS_AHEAD = 6;
   const weeks = [];
   for (let w = startWeek; w < startWeek + WEEKS_AHEAD && w <= 18; w++) weeks.push(w);
@@ -3099,24 +3115,27 @@ async function renderUsageMatrix(startWeek, entriesUsingTeam, liveEntryIds) {
     }));
   } catch (e) { /* byes are a nicety; continue without */ }
 
-  // availability = ALIVE entries that have NOT already used this team
-  const availOf = (ab) => {
+  // which ALIVE entries have NOT used this team (the ones that can still use it)
+  const availEntriesOf = (ab) => {
     const used = entriesUsingTeam[ab] || new Set();
-    let n = 0;
-    liveSet.forEach(id => { if (!used.has(id)) n++; });
-    return n;
+    return liveEntryIds.filter(id => !used.has(id));
   };
+  const availOf = (ab) => availEntriesOf(ab).length;
 
   // sort teams: most-open first, then alphabetical — surfaces golden opportunities up top
   const rowsData = TEAMS.map(([ab, nm]) => ({ ab, nm, avail: availOf(ab) }))
     .sort((a, b) => b.avail - a.avail || a.nm.localeCompare(b.nm));
+
+  // tooltip text: names of entries that can still use it
+  const availLabels = {};
+  TEAMS.forEach(([ab]) => { availLabels[ab] = availEntriesOf(ab).map(labelOf); });
 
   const cellFor = (ab, w) => {
     const playing = byeByWeek[w];
     if (playing && !playing.has(ab)) return `<td class="um-bye">BYE</td>`;
     const a = availOf(ab);
     const cls = a === 0 ? "um-dead" : a >= totalLive ? "um-open" : "um-part";
-    return `<td class="${cls}">${a}</td>`;
+    return `<td class="${cls} um-cell" data-team="${ab}">${a}</td>`;
   };
 
   const head = `<tr><th class="um-team">Team</th>${weeks.map(w => `<th>W${w}</th>`).join("")}</tr>`;
@@ -3126,21 +3145,51 @@ async function renderUsageMatrix(startWeek, entriesUsingTeam, liveEntryIds) {
       ${weeks.map(w => cellFor(r.ab, w)).join("")}
     </tr>`).join("");
 
-  const html = `
-    <div class="um-scroll"><table class="um-table">${head}${body}</table></div>
+  const legendHtml = `
     <div class="um-legend">
       <span><i class="sw um-open-sw"></i> open on all ${totalLive}</span>
       <span><i class="sw um-part-sw"></i> partly used</span>
       <span><i class="sw um-dead-sw"></i> dead (0 left)</span>
       <span><i class="sw um-bye-sw"></i> bye week</span>
-    </div>
-    <p class="hint" style="margin-top:10px">Numbers = how many of your <b>${totalLive} still-alive</b> entries can
-      still use that team (eliminated entries don't count). Higher = more open. Availability only drops when a
-      live entry uses a team, so it holds across future weeks until then. Sorted most-open first to spotlight
-      teams you haven't burned.</p>`;
+    </div>`;
+  const descHtml = `
+    <p class="hint um-desc">Numbers = how many of your <b>${totalLive} still-alive</b> entries can still use that
+      team (eliminated entries don't count). Higher = more open. Availability only drops when a live entry uses a
+      team, so it holds across future weeks until then. Sorted most-open first. <b>Tap any number to see which
+      entries still have that team.</b></p>
+    ${legendHtml}`;
+
+  const html = `
+    ${descHtml}
+    <div class="um-scroll"><table class="um-table">${head}${body}</table></div>
+    <div class="um-drill" id="umdrill" style="display:none"></div>`;
+
+  // stash availability labels for the drill-down
+  window._umAvailLabels = availLabels;
   window._umSig = sig;
   window._umHtml = `<div class="section-title">Team Availability — how many entries can still use each team</div>` + html;
   if (loading) loading.outerHTML = html;
+  wireMatrixDrilldown(box);
+}
+
+// Wire the availability cells to reveal which entries still have that team.
+function wireMatrixDrilldown(box) {
+  const drill = box.querySelector("#umdrill");
+  const labels = window._umAvailLabels || {};
+  box.querySelectorAll(".um-cell").forEach(cell => {
+    cell.onclick = () => {
+      const ab = cell.dataset.team;
+      const nm = TEAM_NAME[ab] || ab;
+      const list = labels[ab] || [];
+      if (!drill) return;
+      drill.style.display = "block";
+      drill.innerHTML = list.length
+        ? `<b>${nm}</b> — still available on ${list.length} ${list.length === 1 ? "entry" : "entries"}:
+           ${list.map(l => `<span class="um-chip">${l}</span>`).join("")}`
+        : `<b>${nm}</b> — dead. Every alive entry has already used this team.`;
+      drill.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    };
+  });
 }
 
 // ============================================================
