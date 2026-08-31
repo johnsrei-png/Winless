@@ -828,6 +828,9 @@
   .um-dead-sw { background: var(--ink-faint); opacity: 0.5; }
   .um-bye-sw { background: var(--line); }
   .um-desc { margin: 0 0 10px 2px; }
+  .acc-good { color: var(--live); }
+  .acc-ok { color: var(--gold); }
+  .acc-off { color: var(--alert); }
   .um-legend { margin-bottom: 14px; }
   .um-cell { cursor: pointer; }
   .um-cell:hover { outline: 1px solid var(--gold); outline-offset: -1px; }
@@ -2137,6 +2140,83 @@ async function renderPotStrip() {
 // ============================================================
 //  STANDINGS TAB — how accurate each of us has been
 // ============================================================
+// ============================================================
+//  Model accuracy tracker — checks Best Loser scores against what
+//  actually happened, so the model's confidence can be validated
+//  against real outcomes instead of trusted on theory alone.
+// ============================================================
+
+// Pull final results for a week directly from ESPN and return team -> 'lost'|'won'|'tied'.
+// Only completed games are included; in-progress/future games are simply absent.
+async function fetchWeekOutcomes(week) {
+  const outcomes = {};
+  try {
+    const res = await fetch(`https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?seasontype=2&week=${week}&dates=${CURRENT_SEASON}`);
+    if (!res.ok) return outcomes;
+    const data = await res.json();
+    (data.events || []).forEach(ev => {
+      const comp = ev.competitions?.[0];
+      if (!comp || comp.status?.type?.completed !== true) return;
+      const cs = comp.competitors || [];
+      const home = cs.find(c => c.homeAway === "home");
+      const away = cs.find(c => c.homeAway === "away");
+      if (!home || !away) return;
+      const hs = parseFloat(home.score), as = parseFloat(away.score);
+      if (isNaN(hs) || isNaN(as)) return;
+      const homeAb = espnAbbr(home.team?.abbreviation), awayAb = espnAbbr(away.team?.abbreviation);
+      if (hs === as) { if (homeAb) outcomes[homeAb] = "tied"; if (awayAb) outcomes[awayAb] = "tied"; }
+      else if (hs > as) { if (homeAb) outcomes[homeAb] = "won"; if (awayAb) outcomes[awayAb] = "lost"; }
+      else { if (homeAb) outcomes[homeAb] = "lost"; if (awayAb) outcomes[awayAb] = "won"; }
+    });
+  } catch (e) { /* leave outcomes empty; those snapshots stay pending */ }
+  return outcomes;
+}
+
+// Resolve any pending snapshots (games since finished), then return every
+// resolved snapshot for the season for the accuracy breakdown.
+async function computeAccuracy() {
+  let resolved = [];
+  try {
+    const pending = await sbGet(`score_snapshots?actual_result=is.null&season=eq.${CURRENT_SEASON}`);
+    if (pending && pending.length) {
+      const weeks = [...new Set(pending.map(p => p.week_number))];
+      for (const wk of weeks) {
+        const outcomes = await fetchWeekOutcomes(wk);
+        const toUpdate = pending.filter(p => p.week_number === wk && outcomes[p.team_abbr]);
+        for (const row of toUpdate) {
+          try {
+            await sb(`score_snapshots?id=eq.${row.id}`, {
+              method: "PATCH", body: JSON.stringify({ actual_result: outcomes[row.team_abbr] }),
+            });
+          } catch (e) { /* leave this one pending, try again next visit */ }
+        }
+      }
+    }
+    resolved = await sbGet(`score_snapshots?actual_result=not.is.null&season=eq.${CURRENT_SEASON}`) || [];
+  } catch (e) { resolved = []; }
+  return resolved;
+}
+
+// Bucket resolved snapshots into 10-point score ranges and compare the
+// predicted score against the actual loss rate within each bucket.
+function bucketAccuracy(resolved) {
+  const buckets = {};   // "70-79" -> { count, lostCount, scoreSum }
+  resolved.forEach(r => {
+    const lo = Math.min(90, Math.floor(r.score / 10) * 10);
+    const key = `${lo}-${lo + 9}`;
+    const b = (buckets[key] ||= { lo, count: 0, lostCount: 0, scoreSum: 0 });
+    b.count++;
+    b.scoreSum += r.score;
+    if (r.actual_result === "lost") b.lostCount++;
+  });
+  return Object.values(buckets).sort((a, b) => a.lo - b.lo).map(b => ({
+    range: `${b.lo}-${b.lo + 9}`,
+    count: b.count,
+    avgPredicted: b.scoreSum / b.count,
+    actualLossPct: (b.lostCount / b.count) * 100,
+  }));
+}
+
 async function renderStandings() {
   renderWhoami();
 
@@ -2406,6 +2486,43 @@ async function renderStandings() {
       </div>
     </div>` : "";
 
+  // ===== Model accuracy tracker =====
+  let accuracyHtml = "";
+  try {
+    const resolved = await computeAccuracy();
+    const buckets = bucketAccuracy(resolved);
+    if (buckets.length) {
+      const rows = buckets.map(b => {
+        const gap = b.actualLossPct - b.avgPredicted;
+        const smallSample = b.count < 5;
+        const calCls = smallSample ? "" : Math.abs(gap) <= 10 ? "acc-good" : Math.abs(gap) <= 20 ? "acc-ok" : "acc-off";
+        return `<div class="st-row" style="grid-template-columns:1fr 100px 100px 90px">
+          <div class="st-name">${b.range}</div>
+          <div class="st-val">${b.avgPredicted.toFixed(0)}%</div>
+          <div class="st-val ${calCls}">${b.actualLossPct.toFixed(0)}%</div>
+          <div class="st-val" style="color:var(--ink-faint)">${b.count}${smallSample ? " (thin)" : ""}</div>
+        </div>`;
+      }).join("");
+      const totalN = buckets.reduce((s, b) => s + b.count, 0);
+      accuracyHtml = `
+        <div class="st-weekly">
+          <div class="st-section-title">Model Accuracy — predicted vs. actual</div>
+          <div class="standings-table">
+            <div class="st-head" style="grid-template-columns:1fr 100px 100px 90px">
+              <div>Score range</div><div>Predicted</div><div>Actually lost</div><div>Sample</div>
+            </div>
+            ${rows}
+          </div>
+          <p class="field-note">For every team scored in Best Losers, this checks whether they actually lost once
+            the game finished. <b>Predicted</b> is the average score in that bucket (its implied loss chance);
+            <b>Actually lost</b> is the real rate. Close together = well-calibrated.
+            <span class="acc-good">Green</span> = within 10pts, <span class="acc-ok">amber</span> = within 20,
+            <span class="acc-off">red</span> = off by more — worth revisiting that part of the model.
+            ${totalN} team-weeks tracked so far this season.</p>
+        </div>`;
+    }
+  } catch (e) { /* accuracy tracker is a nicety; standings still render fine without it */ }
+
   app.innerHTML = `
     <div class="st-section-title">Season Standings — pick accuracy</div>
     <div class="standings-table">
@@ -2428,7 +2545,8 @@ async function renderStandings() {
       <div class="wk-grid"><table>${gridHead}${gridBody}</table></div>
     </div>
     ${potHtml}
-    ${ledgerHtml}`;
+    ${ledgerHtml}
+    ${accuracyHtml}`;
 
   // wire ledger drill-down toggles
   app.querySelectorAll(".ledger-row").forEach(row => {
@@ -2751,6 +2869,9 @@ async function commishTools(overlay) {
       await sb(`peels?id=gte.0`, { method: "DELETE" });
       await sb(`tile_values?id=gte.0`, { method: "DELETE" });
       await sb(`pot_ledger?id=gte.0`, { method: "DELETE" }).catch(() => {});
+      // only clear THIS season's snapshots — the accuracy tracker is meant to
+      // build model-calibration history across seasons, not just one season
+      await sb(`score_snapshots?season=eq.${CURRENT_SEASON}`, { method: "DELETE" }).catch(() => {});
       await sb(`weeks?id=gte.0`, { method: "DELETE" });
       await sb(`entries?id=gte.0`, {
         method: "PATCH", body: JSON.stringify({ status: "alive", died_week: null }),
@@ -3684,6 +3805,17 @@ async function loadMatchups(week) {
     window._blWeek = week;
     document.getElementById("blcontrols").style.display = "flex";
     renderBestLosers("score");
+
+    // snapshot every team's current score for this week — the accuracy tracker
+    // compares these against actual results once games finish. Upserting on
+    // (season, week, team) means whoever last views the app before kickoff
+    // leaves the "closing" score behind, which is what matters for calibration.
+    sbUpsert("score_snapshots",
+      teams.map(t => ({
+        season: CURRENT_SEASON, week_number: week, team_abbr: t.ab, score: t.score,
+      })),
+      "season,week_number,team_abbr"
+    ).catch(() => { /* accuracy tracking is a nicety; never block the panel on it */ });
 
     // wire sort buttons
     panel.querySelectorAll(".bl-sort").forEach(b => {
