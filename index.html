@@ -3224,45 +3224,51 @@ const NAME_TO_ABBR = Object.fromEntries(TEAMS.map(([ab, nm]) => [nm, ab]));
 
 // ------------------------------------------------------------
 // Power ratings from point differential (points scored - allowed, per game).
-// This stands in for a full FPI-style rating without depending on ESPN's
-// flakier power-index endpoint — point differential correlates with FPI at
-// roughly 0.9 and, crucially, doesn't blow up on a 1-0 small sample the way
-// raw win% does (a 1-0 team that won by 3 rates very differently than one
-// that won by 30).
+// Computed directly from FINAL SCORES of already-played weeks via the same
+// scoreboard endpoint used elsewhere in the app (a shape we know is correct),
+// rather than ESPN's standings endpoint, whose exact field names aren't
+// reliably documented and previously produced a garbage +170 pts/gm reading.
+// This stands in for a full FPI-style rating — point differential correlates
+// with FPI at roughly 0.9 — and, crucially, doesn't blow up on a 1-0 small
+// sample the way raw win% does.
 // ------------------------------------------------------------
-async function fetchPowerRatings() {
-  if (window._powerCache) return window._powerCache;
-  const ratings = {};   // abbr -> points-per-game differential
+async function fetchPowerRatings(uptoWeek) {
+  if (window._powerCache && window._powerCacheWeek === uptoWeek) return window._powerCache;
+  const totals = {};   // abbr -> { pf, pa, gp }
+  const bump = (ab, pf, pa) => {
+    const t = (totals[ab] ||= { pf: 0, pa: 0, gp: 0 });
+    t.pf += pf; t.pa += pa; t.gp += 1;
+  };
   try {
-    const res = await fetch("https://site.api.espn.com/apis/v2/sports/football/nfl/standings?season=2025");
-    const data = await res.json();
-    const entries = [];
-    (data.children || data.groups || []).forEach(g => {
-      (g.standings?.entries || []).forEach(e => entries.push(e));
-    });
-    if (!entries.length && data.standings?.entries) entries.push(...data.standings.entries);
-    entries.forEach(e => {
-      const ab = e.team?.abbreviation;
-      if (!ab) return;
-      const stat = (names) => {
-        for (const n of names) {
-          const s = (e.stats || []).find(x => x.name === n || x.abbreviation === n || x.type === n);
-          if (s && s.value != null) return s.value;
-        }
-        return null;
-      };
-      const pf = stat(["pointsFor", "PF"]);
-      const pa = stat(["pointsAgainst", "PA"]);
-      const gp = stat(["gamesPlayed", "GP"]);
-      const diffStat = stat(["differential", "pointDifferential", "avgPointDifferential"]);
-      let diffPerGame = null;
-      if (diffStat != null && gp) diffPerGame = diffStat / gp;
-      else if (pf != null && pa != null && gp) diffPerGame = (pf - pa) / gp;
-      else if (diffStat != null) diffPerGame = diffStat;   // some payloads already report per-game
-      if (diffPerGame != null && !isNaN(diffPerGame)) ratings[ab] = diffPerGame;
-    });
-  } catch (e) { /* standings shape can vary by season stage; fall back to win% for these teams */ }
+    const weeksPlayed = [];
+    for (let w = 1; w < uptoWeek && w <= 18; w++) weeksPlayed.push(w);
+    await Promise.all(weeksPlayed.map(async (w) => {
+      try {
+        const res = await fetch(`https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?seasontype=2&week=${w}&dates=2025`);
+        if (!res.ok) return;
+        const data = await res.json();
+        (data.events || []).forEach(ev => {
+          const comp = ev.competitions?.[0];
+          if (!comp || comp.status?.type?.completed !== true) return;   // only count final games
+          const cs = comp.competitors || [];
+          const home = cs.find(c => c.homeAway === "home");
+          const away = cs.find(c => c.homeAway === "away");
+          if (!home || !away) return;
+          const hs = parseFloat(home.score), as = parseFloat(away.score);
+          if (isNaN(hs) || isNaN(as)) return;
+          if (home.team?.abbreviation) bump(home.team.abbreviation, hs, as);
+          if (away.team?.abbreviation) bump(away.team.abbreviation, as, hs);
+        });
+      } catch (e) { /* skip this week on error */ }
+    }));
+  } catch (e) { /* power ratings are a nicety; teams fall back to win% */ }
+
+  const ratings = {};
+  Object.entries(totals).forEach(([ab, t]) => {
+    if (t.gp > 0) ratings[ab] = (t.pf - t.pa) / t.gp;
+  });
   window._powerCache = ratings;
+  window._powerCacheWeek = uptoWeek;
   return ratings;
 }
 // points-per-game differential → win-probability-style strength percentile.
@@ -3334,7 +3340,7 @@ async function loadMatchups(week) {
     const consensus = await fetchConsensusOdds();
     // power ratings (point differential) + rest days — Tier 2 additions
     const [powerRatings, lastGameDate] = await Promise.all([
-      fetchPowerRatings(),
+      fetchPowerRatings(week),
       fetchRestDays(week),
     ]);
 
