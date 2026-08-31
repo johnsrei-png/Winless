@@ -3222,6 +3222,80 @@ function vigFreeProb(mlThis, mlOther) {
 // full team name → abbreviation (The Odds API uses full names)
 const NAME_TO_ABBR = Object.fromEntries(TEAMS.map(([ab, nm]) => [nm, ab]));
 
+// ------------------------------------------------------------
+// Power ratings from point differential (points scored - allowed, per game).
+// This stands in for a full FPI-style rating without depending on ESPN's
+// flakier power-index endpoint — point differential correlates with FPI at
+// roughly 0.9 and, crucially, doesn't blow up on a 1-0 small sample the way
+// raw win% does (a 1-0 team that won by 3 rates very differently than one
+// that won by 30).
+// ------------------------------------------------------------
+async function fetchPowerRatings() {
+  if (window._powerCache) return window._powerCache;
+  const ratings = {};   // abbr -> points-per-game differential
+  try {
+    const res = await fetch("https://site.api.espn.com/apis/v2/sports/football/nfl/standings?season=2025");
+    const data = await res.json();
+    const entries = [];
+    (data.children || data.groups || []).forEach(g => {
+      (g.standings?.entries || []).forEach(e => entries.push(e));
+    });
+    if (!entries.length && data.standings?.entries) entries.push(...data.standings.entries);
+    entries.forEach(e => {
+      const ab = e.team?.abbreviation;
+      if (!ab) return;
+      const stat = (names) => {
+        for (const n of names) {
+          const s = (e.stats || []).find(x => x.name === n || x.abbreviation === n || x.type === n);
+          if (s && s.value != null) return s.value;
+        }
+        return null;
+      };
+      const pf = stat(["pointsFor", "PF"]);
+      const pa = stat(["pointsAgainst", "PA"]);
+      const gp = stat(["gamesPlayed", "GP"]);
+      const diffStat = stat(["differential", "pointDifferential", "avgPointDifferential"]);
+      let diffPerGame = null;
+      if (diffStat != null && gp) diffPerGame = diffStat / gp;
+      else if (pf != null && pa != null && gp) diffPerGame = (pf - pa) / gp;
+      else if (diffStat != null) diffPerGame = diffStat;   // some payloads already report per-game
+      if (diffPerGame != null && !isNaN(diffPerGame)) ratings[ab] = diffPerGame;
+    });
+  } catch (e) { /* standings shape can vary by season stage; fall back to win% for these teams */ }
+  window._powerCache = ratings;
+  return ratings;
+}
+// points-per-game differential → win-probability-style strength percentile.
+// ~7 pts/gm maps to roughly a 79th percentile team; centered at 0 = average.
+function powerToStrengthPct(diffPerGame) {
+  return 1 / (1 + Math.exp(-diffPerGame / 7));
+}
+
+// ------------------------------------------------------------
+// Rest days: fetch last week's scoreboard once to find each team's last game
+// date, then compare to this week's kickoff. Flags short weeks (Thu games
+// off a Sunday) and byes (extra rest) as small score nudges.
+// ------------------------------------------------------------
+async function fetchRestDays(week) {
+  if (window._restCache && window._restCacheWeek === week) return window._restCache;
+  const lastGameDate = {};   // abbr -> timestamp of most recent prior game
+  if (week > 1) {
+    try {
+      const res = await fetch(`https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?seasontype=2&week=${week - 1}&dates=2025`);
+      const data = await res.json();
+      (data.events || []).forEach(ev => {
+        const dt = ev.date ? new Date(ev.date).getTime() : null;
+        (ev.competitions?.[0]?.competitors || []).forEach(c => {
+          if (c.team?.abbreviation && dt) lastGameDate[c.team.abbreviation] = dt;
+        });
+      });
+    } catch (e) { /* rest info is a nicety; continue without */ }
+  }
+  window._restCache = lastGameDate;
+  window._restCacheWeek = week;
+  return lastGameDate;
+}
+
 // Fetch consensus multi-book odds from our Netlify function. Returns a map
 // keyed by team abbr → { ml, spread, oppAbbr }. Cached per page load.
 async function fetchConsensusOdds() {
@@ -3258,6 +3332,11 @@ async function loadMatchups(week) {
   try {
     // consensus multi-book odds (from our Netlify function) — sharper than ESPN's single line
     const consensus = await fetchConsensusOdds();
+    // power ratings (point differential) + rest days — Tier 2 additions
+    const [powerRatings, lastGameDate] = await Promise.all([
+      fetchPowerRatings(),
+      fetchRestDays(week),
+    ]);
 
     const url = `https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard`
               + `?seasontype=2&week=${week}&dates=2025`;
@@ -3347,8 +3426,17 @@ async function loadMatchups(week) {
             steps.push({ label: `Spread cross-check ${teamSpread > 0 ? "+" + teamSpread : teamSpread}`, val: `→ ${Math.round(lossProb*100)}%` });
           }
 
-          // opponent strength nudge: strong opponent (high win%) makes losing likelier
-          if (oppWinPct != null) {
+          // opponent strength: prefer power rating (point differential) over raw win% —
+          // it doesn't overreact to a 1-0 start the way win% does.
+          const oppAbbr = opp.team?.abbreviation;
+          const oppPower = oppAbbr ? powerRatings[oppAbbr] : null;
+          if (oppPower != null) {
+            const strengthPct = powerToStrengthPct(oppPower);
+            const adj = (strengthPct - 0.5) * 0.12;
+            lossProb += adj;
+            const sign = oppPower >= 0 ? "+" : "";
+            steps.push({ label: `Opponent power rating (${sign}${oppPower.toFixed(1)} pts/gm)`, val: `${adj >= 0 ? "+" : ""}${Math.round(adj*100)}%` });
+          } else if (oppWinPct != null) {
             const adj = (oppWinPct - 0.5) * 0.12;
             lossProb += adj;
             const pct = Math.round(oppWinPct * 100);
@@ -3358,6 +3446,21 @@ async function loadMatchups(week) {
           if (side === "away") {
             lossProb += 0.02;
             steps.push({ label: "Road team", val: "+2%" });
+          }
+          // rest: short week (≤4 days, e.g. a Thursday game off a Sunday) is a small
+          // disadvantage; extra rest (≥12 days, coming off a bye) is a small edge.
+          if (dt) {
+            const lastDt = lastGameDate[ab];
+            if (lastDt) {
+              const restDays = (dt.getTime() - lastDt) / 86400000;
+              if (restDays > 0 && restDays <= 4) {
+                lossProb += 0.015;
+                steps.push({ label: `Short week (${restDays.toFixed(0)}d rest)`, val: "+1.5%" });
+              } else if (restDays >= 12) {
+                lossProb -= 0.015;
+                steps.push({ label: `Extra rest (${restDays.toFixed(0)}d — off a bye)`, val: "−1.5%" });
+              }
+            }
           }
 
           lossProb = Math.max(0.02, Math.min(0.98, lossProb));
@@ -3423,8 +3526,8 @@ function renderBestLosers(sortBy) {
   const existing = panel.querySelector(".matchup-list, .matchup-loading, .matchup-empty");
   const html = `<div class="matchup-list">${rows}</div>
     <div class="matchup-note">Loser score = chance this team loses. ${anyConsensus
-      ? "Built from <b>consensus multi-book moneylines</b> (vig removed) + spread + opponent strength."
-      : "Built from ESPN's line + opponent strength. (Add an Odds API key for sharper multi-book consensus.)"}
+      ? "Built from <b>consensus multi-book moneylines</b> (vig removed) + spread + opponent power rating + rest."
+      : "Built from ESPN's line + opponent power rating + rest. (Add an Odds API key for sharper multi-book consensus.)"}
       Tap a team to see the math. Lines already bake in injuries, QB, rest & weather.</div>`;
   if (existing) existing.outerHTML = html;
   else panel.insertAdjacentHTML("beforeend", html);
