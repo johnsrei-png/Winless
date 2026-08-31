@@ -3437,14 +3437,21 @@ async function fetchConsensusOdds() {
     if (data.ok && data.games) {
       data.games.forEach(g => {
         const homeAb = NAME_TO_ABBR[g.home], awayAb = NAME_TO_ABBR[g.away];
-        if (homeAb) byTeam[homeAb] = { ml: g.mlHome, mlOther: g.mlAway, spread: g.spreadHome, oppAbbr: awayAb, books: g.books };
-        if (awayAb) byTeam[awayAb] = { ml: g.mlAway, mlOther: g.mlHome, spread: g.spreadAway, oppAbbr: homeAb, books: g.books };
+        if (homeAb) byTeam[homeAb] = {
+          ml: g.mlHome, mlOther: g.mlAway, spread: g.spreadHome, oppAbbr: awayAb, books: g.books,
+          openingMl: g.openingMlHome, openingSpread: g.openingSpreadHome, openingAt: g.openingCapturedAt,
+        };
+        if (awayAb) byTeam[awayAb] = {
+          ml: g.mlAway, mlOther: g.mlHome, spread: g.spreadAway, oppAbbr: homeAb, books: g.books,
+          openingMl: g.openingMlAway, openingSpread: g.openingSpreadAway, openingAt: g.openingCapturedAt,
+        };
       });
     }
   } catch (e) { /* function may be unconfigured; fall back to ESPN lines */ }
   window._oddsCache = byTeam;
   return byTeam;
 }
+
 
 async function loadMatchups(week) {
   const panel = document.getElementById("matchups");
@@ -3554,6 +3561,18 @@ async function loadMatchups(week) {
             const before = lossProb;
             lossProb = lossProb * 0.75 + sp * 0.25;
             steps.push({ label: `Spread cross-check ${teamSpread > 0 ? "+" + teamSpread : teamSpread}`, val: `→ ${Math.round(lossProb*100)}%` });
+          }
+
+          // LINE MOVEMENT: informational only (not folded into the score yet — we're
+          // still accumulating history, and a "how much movement is significant" scale
+          // needs real data to calibrate rather than a guessed constant). Shows how
+          // today's line compares to the first one we ever captured for this game.
+          if (con && con.openingSpread != null && con.spread != null && Math.abs(con.spread - con.openingSpread) >= 0.5) {
+            const openSign = con.openingSpread > 0 ? "+" : "";
+            const nowSign = con.spread > 0 ? "+" : "";
+            const moved = con.spread - con.openingSpread;
+            const direction = moved > 0 ? "line moved toward this team (more of an underdog)" : "line moved away from this team (more favored)";
+            steps.push({ label: `📈 Line movement: ${openSign}${con.openingSpread} → ${nowSign}${con.spread} (${direction})`, val: "info only" });
           }
 
           // opponent strength: prefer power rating (point differential) over raw win% —
