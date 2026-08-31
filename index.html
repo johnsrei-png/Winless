@@ -3211,11 +3211,45 @@ function moneylineToProb(ml) {
   return ml < 0 ? (-ml) / (-ml + 100) : 100 / (ml + 100);
 }
 
+// Two-way vig-free probability: given both sides' moneylines, remove the book's
+// margin so the two probabilities sum to 1. This is the sharpest single input.
+function vigFreeProb(mlThis, mlOther) {
+  const a = moneylineToProb(mlThis), b = moneylineToProb(mlOther);
+  if (a == null || b == null || (a + b) === 0) return a; // fall back to raw if needed
+  return a / (a + b);
+}
+
+// full team name → abbreviation (The Odds API uses full names)
+const NAME_TO_ABBR = Object.fromEntries(TEAMS.map(([ab, nm]) => [nm, ab]));
+
+// Fetch consensus multi-book odds from our Netlify function. Returns a map
+// keyed by team abbr → { ml, spread, oppAbbr }. Cached per page load.
+async function fetchConsensusOdds() {
+  if (window._oddsCache) return window._oddsCache;
+  const byTeam = {};
+  try {
+    const res = await fetch("/.netlify/functions/get-odds");
+    const data = await res.json();
+    if (data.ok && data.games) {
+      data.games.forEach(g => {
+        const homeAb = NAME_TO_ABBR[g.home], awayAb = NAME_TO_ABBR[g.away];
+        if (homeAb) byTeam[homeAb] = { ml: g.mlHome, mlOther: g.mlAway, spread: g.spreadHome, oppAbbr: awayAb, books: g.books };
+        if (awayAb) byTeam[awayAb] = { ml: g.mlAway, mlOther: g.mlHome, spread: g.spreadAway, oppAbbr: homeAb, books: g.books };
+      });
+    }
+  } catch (e) { /* function may be unconfigured; fall back to ESPN lines */ }
+  window._oddsCache = byTeam;
+  return byTeam;
+}
+
 async function loadMatchups(week) {
   const panel = document.getElementById("matchups");
   if (!panel) return;
   const body = panel.querySelector(".matchup-loading");
   try {
+    // consensus multi-book odds (from our Netlify function) — sharper than ESPN's single line
+    const consensus = await fetchConsensusOdds();
+
     const url = `https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard`
               + `?seasontype=2&week=${week}&dates=2025`;
     const res = await fetch(url);
@@ -3271,21 +3305,37 @@ async function loadMatchups(week) {
           if (spreadMag != null && favAbbr) teamSpread = (ab === favAbbr) ? -spreadMag : spreadMag;
 
           const steps = [];   // human-readable breakdown of the score
+          const con = consensus[ab];       // consensus odds for this team, if available
+          let lossProb, primary;
 
-          // base loss prob from spread
-          let lossProb = teamSpread != null ? spreadToLossProb(teamSpread) : 0.5;
-          if (teamSpread != null) {
-            steps.push({ label: `Spread ${teamSpread > 0 ? "+" + teamSpread + " (underdog)" : teamSpread + " (favorite)"}`, val: `${Math.round(lossProb*100)}% base` });
+          // PRIMARY: vig-free consensus moneyline (sharpest input). Falls back to
+          // consensus spread, then ESPN's single line, then a coin flip.
+          if (con && con.ml != null && con.mlOther != null) {
+            const winProb = vigFreeProb(con.ml, con.mlOther);   // vig removed
+            lossProb = 1 - winProb;
+            primary = "ml";
+            steps.push({ label: `Consensus moneyline ${con.ml > 0 ? "+" + con.ml : con.ml} (${con.books} books, vig-free)`, val: `${Math.round(lossProb*100)}% base` });
+          } else if (con && con.spread != null) {
+            lossProb = spreadToLossProb(con.spread);
+            teamSpread = con.spread;
+            primary = "spread-consensus";
+            steps.push({ label: `Consensus spread ${con.spread > 0 ? "+" + con.spread : con.spread} (${con.books} books)`, val: `${Math.round(lossProb*100)}% base` });
+          } else if (teamSpread != null) {
+            lossProb = spreadToLossProb(teamSpread);
+            primary = "spread-espn";
+            steps.push({ label: `Spread ${teamSpread > 0 ? "+" + teamSpread + " (underdog)" : teamSpread + " (favorite)"} (ESPN)`, val: `${Math.round(lossProb*100)}% base` });
           } else {
-            steps.push({ label: "No spread posted", val: "50% base" });
+            lossProb = 0.5;
+            primary = "none";
+            steps.push({ label: "No line posted", val: "50% base" });
           }
 
-          // blend in moneyline-implied loss prob when available (average the two)
-          const mlProb = moneylineToProb(ml);              // prob THIS team WINS
-          if (mlProb != null) {
+          // If moneyline was primary, blend the spread in lightly as a cross-check (¼ weight)
+          if (primary === "ml" && teamSpread != null) {
+            const sp = spreadToLossProb(teamSpread);
             const before = lossProb;
-            lossProb = (lossProb + (1 - mlProb)) / 2;
-            steps.push({ label: `Moneyline ${ml > 0 ? "+" + ml : ml}`, val: `blended → ${Math.round(lossProb*100)}%` });
+            lossProb = lossProb * 0.75 + sp * 0.25;
+            steps.push({ label: `Spread cross-check ${teamSpread > 0 ? "+" + teamSpread : teamSpread}`, val: `→ ${Math.round(lossProb*100)}%` });
           }
 
           // opponent strength nudge: strong opponent (high win%) makes losing likelier
@@ -3308,6 +3358,7 @@ async function loadMatchups(week) {
             oppAb: opp.team?.abbreviation, oppName: opp.team?.shortDisplayName || opp.team?.abbreviation,
             side, teamSpread, when, date: dt ? dt.getTime() : 0,
             score: Math.round(lossProb * 100), steps,
+            hasConsensus: !!(con && con.ml != null),
           });
         });
     });
@@ -3358,10 +3409,13 @@ function renderBestLosers(sortBy) {
       <div class="bl-step bl-step-total"><span><b>Loser score</b></span><span class="bl-step-v"><b>${t.score}</b></span></div>
     </div>`).join("");
 
+  const anyConsensus = teams.some(t => t.hasConsensus);
   const existing = panel.querySelector(".matchup-list, .matchup-loading, .matchup-empty");
   const html = `<div class="matchup-list">${rows}</div>
-    <div class="matchup-note">Loser score = chance this team loses, from Vegas lines + opponent strength.
-      Tap a team to see the math. Higher is a safer "loser" pick. Lines already bake in injuries, QB, rest & weather.</div>`;
+    <div class="matchup-note">Loser score = chance this team loses. ${anyConsensus
+      ? "Built from <b>consensus multi-book moneylines</b> (vig removed) + spread + opponent strength."
+      : "Built from ESPN's line + opponent strength. (Add an Odds API key for sharper multi-book consensus.)"}
+      Tap a team to see the math. Lines already bake in injuries, QB, rest & weather.</div>`;
   if (existing) existing.outerHTML = html;
   else panel.insertAdjacentHTML("beforeend", html);
 
