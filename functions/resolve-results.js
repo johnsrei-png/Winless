@@ -5,7 +5,7 @@
 //  Idempotent: only touches games that are final; safe to run often.
 // ============================================================
 
-const SEASON = 2025;          // NFL season year to query
+const SEASON = 2026;          // NFL season year to query
 const SEASON_TYPE = 2;        // 2 = regular season
 
 // Supabase config comes from Netlify env vars (set in dashboard):
