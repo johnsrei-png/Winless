@@ -4,7 +4,7 @@
 //  on demand from the UI. Returns a small report.
 // ============================================================
 
-const SEASON = 2025;
+const SEASON = 2026;
 const SEASON_TYPE = 2;
 
 const SB_URL = (process.env.SUPABASE_URL || "").replace(/\/$/, "");
