@@ -988,6 +988,15 @@ const TEAMS = [
 ];
 const TEAM_NAME = Object.fromEntries(TEAMS.map(t => [t[0], t[1]]));
 
+// ESPN's API uses a few abbreviations that differ from this app's own team list
+// (e.g. Washington is "WSH" in ESPN's data but "WAS" everywhere in this app).
+// EVERY read of a team abbreviation from an ESPN response must go through this,
+// or lookups against our own data (consensus odds, entries, divisions, etc.)
+// silently fail for that team — which is exactly what caused the Commanders
+// showing "BYE" every single week.
+const ESPN_ABBR_FIX = { WSH: "WAS" };
+function espnAbbr(a) { return ESPN_ABBR_FIX[a] || a; }
+
 // Static division map (doesn't change season to season) — used for divisional
 // game dampening: division rivals tend to play closer than the line implies,
 // thanks to familiarity, rivalry intensity, and travel-neutral scheduling.
@@ -996,7 +1005,7 @@ const TEAM_DIVISION = {
   BAL: "AFCN", CIN: "AFCN", CLE: "AFCN", PIT: "AFCN",
   HOU: "AFCS", IND: "AFCS", JAX: "AFCS", TEN: "AFCS",
   DEN: "AFCW", KC: "AFCW", LV: "AFCW", LAC: "AFCW",
-  DAL: "NFCE", NYG: "NFCE", PHI: "NFCE", WSH: "NFCE",
+  DAL: "NFCE", NYG: "NFCE", PHI: "NFCE", WAS: "NFCE",
   CHI: "NFCN", DET: "NFCN", GB: "NFCN", MIN: "NFCN",
   ATL: "NFCS", CAR: "NFCS", NO: "NFCS", TB: "NFCS",
   ARI: "NFCW", LAR: "NFCW", SF: "NFCW", SEA: "NFCW",
@@ -3126,7 +3135,7 @@ async function renderUsageMatrix(startWeek, entriesUsingTeam, liveEntryIds, entr
       const playing = new Set();
       (data.events || []).forEach(ev => {
         (ev.competitions?.[0]?.competitors || []).forEach(c => {
-          if (c.team?.abbreviation) playing.add(c.team.abbreviation);
+          if (c.team?.abbreviation) playing.add(espnAbbr(c.team.abbreviation));
         });
       });
       byeByWeek[w] = playing;
@@ -3269,8 +3278,8 @@ async function fetchSeasonPowerRatings(year) {
           if (!home || !away) return;
           const hs = parseFloat(home.score), as = parseFloat(away.score);
           if (isNaN(hs) || isNaN(as)) return;
-          if (home.team?.abbreviation) bump(home.team.abbreviation, "home", hs, as);
-          if (away.team?.abbreviation) bump(away.team.abbreviation, "away", as, hs);
+          if (home.team?.abbreviation) bump(espnAbbr(home.team.abbreviation), "home", hs, as);
+          if (away.team?.abbreviation) bump(espnAbbr(away.team.abbreviation), "away", as, hs);
         });
       } catch (e) { /* skip this week on error */ }
     }));
@@ -3331,8 +3340,8 @@ async function fetchPowerRatings(uptoWeek) {
           if (!home || !away) return;
           const hs = parseFloat(home.score), as = parseFloat(away.score);
           if (isNaN(hs) || isNaN(as)) return;
-          if (home.team?.abbreviation) bump(home.team.abbreviation, "home", hs, as);
-          if (away.team?.abbreviation) bump(away.team.abbreviation, "away", as, hs);
+          if (home.team?.abbreviation) bump(espnAbbr(home.team.abbreviation), "home", hs, as);
+          if (away.team?.abbreviation) bump(espnAbbr(away.team.abbreviation), "away", as, hs);
         });
       } catch (e) { /* skip this week on error */ }
     }));
@@ -3416,7 +3425,7 @@ async function fetchRestDays(week) {
       (data.events || []).forEach(ev => {
         const dt = ev.date ? new Date(ev.date).getTime() : null;
         (ev.competitions?.[0]?.competitors || []).forEach(c => {
-          if (c.team?.abbreviation && dt) lastGameDate[c.team.abbreviation] = dt;
+          if (c.team?.abbreviation && dt) lastGameDate[espnAbbr(c.team.abbreviation)] = dt;
         });
       });
     } catch (e) { /* rest info is a nicety; continue without */ }
@@ -3496,10 +3505,10 @@ async function loadMatchups(week) {
       let favAbbr = null, spreadMag = null;
       if (odds?.details && odds.details !== "EVEN") {
         const m = odds.details.match(/([A-Z]{2,4})\s*(-?\d+(\.\d+)?)/);
-        if (m) { favAbbr = m[1]; spreadMag = Math.abs(parseFloat(m[2])); }
+        if (m) { favAbbr = espnAbbr(m[1]); spreadMag = Math.abs(parseFloat(m[2])); }
       } else if (odds?.spread != null) {
         spreadMag = Math.abs(odds.spread);
-        favAbbr = odds.spread < 0 ? home.team?.abbreviation : away.team?.abbreviation;
+        favAbbr = odds.spread < 0 ? espnAbbr(home.team?.abbreviation) : espnAbbr(away.team?.abbreviation);
       }
 
       const dt = ev.date ? new Date(ev.date) : null;
@@ -3523,7 +3532,7 @@ async function loadMatchups(week) {
       [[home, away, "home", homeML, awayWinPct, homeWinPct],
        [away, home, "away", awayML, homeWinPct, awayWinPct]].forEach(
         ([t, opp, side, ml, oppWinPct, myWinPct]) => {
-          const ab = t.team?.abbreviation;
+          const ab = espnAbbr(t.team?.abbreviation);
           if (!ab) return;
           // team spread from its own perspective: + = underdog (expected to lose)
           let teamSpread = null;
@@ -3583,7 +3592,7 @@ async function loadMatchups(week) {
 
           // opponent strength: prefer power rating (point differential) over raw win% —
           // it doesn't overreact to a 1-0 start the way win% does.
-          const oppAbbr = opp.team?.abbreviation;
+          const oppAbbr = espnAbbr(opp.team?.abbreviation);
           const oppPower = oppAbbr ? powerRatings[oppAbbr] : null;
           if (oppPower != null) {
             const strengthPct = powerToStrengthPct(oppPower);
@@ -3657,7 +3666,7 @@ async function loadMatchups(week) {
 
           teams.push({
             ab, name: t.team?.shortDisplayName || ab,
-            oppAb: opp.team?.abbreviation, oppName: opp.team?.shortDisplayName || opp.team?.abbreviation,
+            oppAb: espnAbbr(opp.team?.abbreviation), oppName: opp.team?.shortDisplayName || opp.team?.abbreviation,
             side, teamSpread, when, date: dt ? dt.getTime() : 0,
             score: Math.round(lossProb * 100), steps,
             hasConsensus: !!(con && con.ml != null),
