@@ -969,6 +969,10 @@ const SB_KEY = CFG.SUPABASE_ANON_KEY || "";
 const CONFIGURED = SB_URL && SB_KEY && !SB_URL.includes("PASTE_") && !SB_KEY.includes("PASTE_");
 
 // NFL teams — abbrev + display
+// The NFL season year this app is tracking. Update this one line each year —
+// every ESPN fetch (matchups, byes, power ratings) reads from it.
+const CURRENT_SEASON = 2026;
+
 const TEAMS = [
   ["ARI","Arizona Cardinals"],["ATL","Atlanta Falcons"],["BAL","Baltimore Ravens"],
   ["BUF","Buffalo Bills"],["CAR","Carolina Panthers"],["CHI","Chicago Bears"],
@@ -3101,7 +3105,7 @@ async function renderUsageMatrix(startWeek, entriesUsingTeam, liveEntryIds, entr
   const byeByWeek = {};   // week -> Set(teamAbbr playing)
   try {
     await Promise.all(weeks.map(async (w) => {
-      const url = `https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?seasontype=2&week=${w}&dates=2025`;
+      const url = `https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?seasontype=2&week=${w}&dates=${CURRENT_SEASON}`;
       const res = await fetch(url);
       if (!res.ok) return;
       const data = await res.json();
@@ -3222,6 +3226,45 @@ function vigFreeProb(mlThis, mlOther) {
 // full team name → abbreviation (The Odds API uses full names)
 const NAME_TO_ABBR = Object.fromEntries(TEAMS.map(([ab, nm]) => [nm, ab]));
 
+// Fetch a full season's point differential (all 18 weeks, final games only).
+// Used as the "prior season" reference for early-season blending. Cached hard —
+// a past season's results never change, so we only ever fetch this once.
+async function fetchSeasonPowerRatings(year) {
+  const cacheKey = "_seasonPowerCache_" + year;
+  if (window[cacheKey]) return window[cacheKey];
+  const totals = {};
+  const bump = (ab, pf, pa) => {
+    const t = (totals[ab] ||= { pf: 0, pa: 0, gp: 0 });
+    t.pf += pf; t.pa += pa; t.gp += 1;
+  };
+  try {
+    const weeks = []; for (let w = 1; w <= 18; w++) weeks.push(w);
+    await Promise.all(weeks.map(async (w) => {
+      try {
+        const res = await fetch(`https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?seasontype=2&week=${w}&dates=${year}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        (data.events || []).forEach(ev => {
+          const comp = ev.competitions?.[0];
+          if (!comp || comp.status?.type?.completed !== true) return;
+          const cs = comp.competitors || [];
+          const home = cs.find(c => c.homeAway === "home");
+          const away = cs.find(c => c.homeAway === "away");
+          if (!home || !away) return;
+          const hs = parseFloat(home.score), as = parseFloat(away.score);
+          if (isNaN(hs) || isNaN(as)) return;
+          if (home.team?.abbreviation) bump(home.team.abbreviation, hs, as);
+          if (away.team?.abbreviation) bump(away.team.abbreviation, as, hs);
+        });
+      } catch (e) { /* skip this week on error */ }
+    }));
+  } catch (e) { /* prior-season blend is a nicety; teams fall back further to win% */ }
+  const ratings = {};
+  Object.entries(totals).forEach(([ab, t]) => { if (t.gp > 0) ratings[ab] = (t.pf - t.pa) / t.gp; });
+  window[cacheKey] = ratings;
+  return ratings;
+}
+
 // ------------------------------------------------------------
 // Power ratings from point differential (points scored - allowed, per game).
 // Computed directly from FINAL SCORES of already-played weeks via the same
@@ -3231,10 +3274,19 @@ const NAME_TO_ABBR = Object.fromEntries(TEAMS.map(([ab, nm]) => [nm, ab]));
 // This stands in for a full FPI-style rating — point differential correlates
 // with FPI at roughly 0.9 — and, crucially, doesn't blow up on a 1-0 small
 // sample the way raw win% does.
+//
+// EARLY-SEASON BLEND: with few or zero current-season games played (week 1
+// has none at all), current-season data alone is either empty or a tiny,
+// noisy sample. So each team's rating blends current-season point diff with
+// LAST season's full-year point diff, shrinking the prior-season weight as
+// more current-season games accumulate — full prior season at 0 games played,
+// fully current-season by ~5 games. This is the standard way to avoid
+// overreacting to a small early sample while still using real data.
 // ------------------------------------------------------------
+const SHRINK_GAMES = 5;   // current-season weight reaches 100% around this many games played
 async function fetchPowerRatings(uptoWeek) {
   if (window._powerCache && window._powerCacheWeek === uptoWeek) return window._powerCache;
-  const totals = {};   // abbr -> { pf, pa, gp }
+  const totals = {};   // abbr -> { pf, pa, gp }  (current season only)
   const bump = (ab, pf, pa) => {
     const t = (totals[ab] ||= { pf: 0, pa: 0, gp: 0 });
     t.pf += pf; t.pa += pa; t.gp += 1;
@@ -3244,7 +3296,7 @@ async function fetchPowerRatings(uptoWeek) {
     for (let w = 1; w < uptoWeek && w <= 18; w++) weeksPlayed.push(w);
     await Promise.all(weeksPlayed.map(async (w) => {
       try {
-        const res = await fetch(`https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?seasontype=2&week=${w}&dates=2025`);
+        const res = await fetch(`https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?seasontype=2&week=${w}&dates=${CURRENT_SEASON}`);
         if (!res.ok) return;
         const data = await res.json();
         (data.events || []).forEach(ev => {
@@ -3263,12 +3315,39 @@ async function fetchPowerRatings(uptoWeek) {
     }));
   } catch (e) { /* power ratings are a nicety; teams fall back to win% */ }
 
-  const ratings = {};
-  Object.entries(totals).forEach(([ab, t]) => {
-    if (t.gp > 0) ratings[ab] = (t.pf - t.pa) / t.gp;
+  // pull in a prior-season blend only when it could actually matter (early season) —
+  // no need once everyone has a full current-season sample.
+  const maxGp = Math.max(0, ...Object.values(totals).map(t => t.gp));
+  let priorRatings = {};
+  if (maxGp < SHRINK_GAMES) {
+    priorRatings = await fetchSeasonPowerRatings(CURRENT_SEASON - 1);
+  }
+
+  const ratings = {};       // final blended abbr -> pts/gm
+  const ratingSource = {};  // abbr -> "current" | "blend" | "prior" | "none" (for the breakdown UI)
+  const allAbbrs = new Set([...Object.keys(totals), ...Object.keys(priorRatings)]);
+  allAbbrs.forEach(ab => {
+    const t = totals[ab];
+    const curDiff = t && t.gp > 0 ? (t.pf - t.pa) / t.gp : null;
+    const priorDiff = priorRatings[ab] != null ? priorRatings[ab] : null;
+    const gp = t ? t.gp : 0;
+
+    if (curDiff != null && gp >= SHRINK_GAMES) {
+      ratings[ab] = curDiff; ratingSource[ab] = "current";
+    } else if (curDiff != null && priorDiff != null) {
+      const w = gp / SHRINK_GAMES;   // 0..1 weight toward current season
+      ratings[ab] = curDiff * w + priorDiff * (1 - w);
+      ratingSource[ab] = "blend";
+    } else if (priorDiff != null) {
+      ratings[ab] = priorDiff; ratingSource[ab] = "prior";
+    } else if (curDiff != null) {
+      ratings[ab] = curDiff; ratingSource[ab] = "current";
+    }
   });
+
   window._powerCache = ratings;
   window._powerCacheWeek = uptoWeek;
+  window._powerSource = ratingSource;
   return ratings;
 }
 // points-per-game differential → win-probability-style strength percentile.
@@ -3287,7 +3366,7 @@ async function fetchRestDays(week) {
   const lastGameDate = {};   // abbr -> timestamp of most recent prior game
   if (week > 1) {
     try {
-      const res = await fetch(`https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?seasontype=2&week=${week - 1}&dates=2025`);
+      const res = await fetch(`https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?seasontype=2&week=${week - 1}&dates=${CURRENT_SEASON}`);
       const data = await res.json();
       (data.events || []).forEach(ev => {
         const dt = ev.date ? new Date(ev.date).getTime() : null;
@@ -3345,7 +3424,7 @@ async function loadMatchups(week) {
     ]);
 
     const url = `https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard`
-              + `?seasontype=2&week=${week}&dates=2025`;
+              + `?seasontype=2&week=${week}&dates=${CURRENT_SEASON}`;
     const res = await fetch(url);
     if (!res.ok) throw new Error("ESPN " + res.status);
     const data = await res.json();
@@ -3441,7 +3520,9 @@ async function loadMatchups(week) {
             const adj = (strengthPct - 0.5) * 0.12;
             lossProb += adj;
             const sign = oppPower >= 0 ? "+" : "";
-            steps.push({ label: `Opponent power rating (${sign}${oppPower.toFixed(1)} pts/gm)`, val: `${adj >= 0 ? "+" : ""}${Math.round(adj*100)}%` });
+            const src = window._powerSource?.[oppAbbr];
+            const srcTxt = src === "prior" ? `, ${CURRENT_SEASON - 1} season` : src === "blend" ? `, blended w/ ${CURRENT_SEASON - 1}` : "";
+            steps.push({ label: `Opponent power rating (${sign}${oppPower.toFixed(1)} pts/gm${srcTxt})`, val: `${adj >= 0 ? "+" : ""}${Math.round(adj*100)}%` });
           } else if (oppWinPct != null) {
             const adj = (oppWinPct - 0.5) * 0.12;
             lossProb += adj;
