@@ -785,6 +785,36 @@
   .bl-side { color: var(--ink-faint); font-weight: 400; font-size: 12px; }
   .bl-meta { font-size: 11px; color: var(--ink-faint); font-family: 'Barlow Semi Condensed', sans-serif; margin-top: 1px; }
 
+  /* ---- Team availability matrix ---- */
+  .usage-matrix { margin-top: 26px; }
+  .um-loading { font-size: 13px; color: var(--ink-faint); padding: 8px 2px; }
+  .um-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; }
+  .um-table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  .um-table th, .um-table td {
+    padding: 8px 10px; text-align: center; border-bottom: 1px solid var(--line);
+    white-space: nowrap;
+  }
+  .um-table th {
+    font-family: 'Barlow Semi Condensed', sans-serif; font-size: 11px; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--ink-faint); font-weight: 600; position: sticky; top: 0;
+    background: var(--panel);
+  }
+  .um-table tr:last-child td { border-bottom: none; }
+  .um-team { text-align: left !important; font-weight: 600; position: sticky; left: 0; background: var(--panel); }
+  .um-table th.um-team { z-index: 2; }
+  .um-open { color: var(--live); font-weight: 700; }
+  .um-part { color: var(--gold); }
+  .um-dead { color: var(--ink-faint); opacity: 0.5; }
+  .um-bye { color: var(--ink-faint); font-size: 10px; font-family: 'Barlow Semi Condensed', sans-serif; letter-spacing: 0.06em; }
+  .um-legend {
+    display: flex; flex-wrap: wrap; gap: 16px; margin-top: 12px; font-size: 12px; color: var(--ink-dim);
+  }
+  .um-legend .sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: middle; }
+  .um-open-sw { background: var(--live); }
+  .um-part-sw { background: var(--gold); }
+  .um-dead-sw { background: var(--ink-faint); opacity: 0.5; }
+  .um-bye-sw { background: var(--line); }
+
   .pot-strip {
     display: flex; align-items: center; gap: 12px;
     background: linear-gradient(90deg, rgba(245,196,81,0.12), rgba(245,196,81,0.02));
@@ -1358,10 +1388,17 @@ async function renderWeek() {
         </div>
         <div class="matchup-loading">Crunching the lines…</div>
       </aside>
+    </div>
+
+    <div class="usage-matrix" id="usagematrix">
+      <div class="section-title">Team Availability — how many entries can still use each team</div>
+      <div class="um-loading">Loading availability…</div>
     </div>`;
 
   // load matchups + compute Best Loser scores from ESPN (client-side) into the side panel
   loadMatchups(wk.week_number);
+  // build the forward-looking availability matrix under the picks
+  renderUsageMatrix(wk.week_number, entriesUsingTeam, entryIds);
 
   // prevent picking the same team twice — live dedupe styling
   const selects = () => Array.from(app.querySelectorAll("select.team"));
@@ -3002,6 +3039,75 @@ async function peelTile(tileIndex, week, typeByTile, valueByTile, multiplierArme
 }
 
 // Fetch this week's NFL matchups + lines from ESPN and fill the side panel.
+// ============================================================
+//  Team Availability Matrix — forward-looking, entry-based.
+//  Each cell = how many of the 6 entries can still use that team that week.
+//  Availability is constant across future weeks (until an entry uses it),
+//  so the per-week dimension exists to flag BYE weeks (team can't be picked).
+// ============================================================
+async function renderUsageMatrix(startWeek, entriesUsingTeam, entryIds) {
+  const box = document.getElementById("usagematrix");
+  if (!box) return;
+  const loading = box.querySelector(".um-loading");
+  const totalEntries = entryIds.length || 6;
+  const WEEKS_AHEAD = 6;
+  const weeks = [];
+  for (let w = startWeek; w < startWeek + WEEKS_AHEAD && w <= 18; w++) weeks.push(w);
+
+  // fetch bye weeks: a team is on bye in week W if it's NOT in that week's schedule.
+  const byeByWeek = {};   // week -> Set(teamAbbr playing)
+  try {
+    await Promise.all(weeks.map(async (w) => {
+      const url = `https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?seasontype=2&week=${w}&dates=2025`;
+      const res = await fetch(url);
+      if (!res.ok) return;
+      const data = await res.json();
+      const playing = new Set();
+      (data.events || []).forEach(ev => {
+        (ev.competitions?.[0]?.competitors || []).forEach(c => {
+          if (c.team?.abbreviation) playing.add(c.team.abbreviation);
+        });
+      });
+      byeByWeek[w] = playing;
+    }));
+  } catch (e) { /* byes are a nicety; continue without */ }
+
+  // availability per team = entries that have NOT used it
+  const availOf = (ab) => totalEntries - (entriesUsingTeam[ab]?.size || 0);
+
+  // sort teams: most-open first, then alphabetical — surfaces golden opportunities up top
+  const rowsData = TEAMS.map(([ab, nm]) => ({ ab, nm, avail: availOf(ab) }))
+    .sort((a, b) => b.avail - a.avail || a.nm.localeCompare(b.nm));
+
+  const cellFor = (ab, w) => {
+    const playing = byeByWeek[w];
+    if (playing && !playing.has(ab)) return `<td class="um-bye">BYE</td>`;
+    const a = availOf(ab);
+    const cls = a === 0 ? "um-dead" : a >= totalEntries ? "um-open" : "um-part";
+    return `<td class="${cls}">${a}</td>`;
+  };
+
+  const head = `<tr><th class="um-team">Team</th>${weeks.map(w => `<th>W${w}</th>`).join("")}</tr>`;
+  const body = rowsData.map(r => `
+    <tr>
+      <td class="um-team">${r.nm}</td>
+      ${weeks.map(w => cellFor(r.ab, w)).join("")}
+    </tr>`).join("");
+
+  const html = `
+    <div class="um-scroll"><table class="um-table">${head}${body}</table></div>
+    <div class="um-legend">
+      <span><i class="sw um-open-sw"></i> open on all ${totalEntries}</span>
+      <span><i class="sw um-part-sw"></i> partly used</span>
+      <span><i class="sw um-dead-sw"></i> dead (0 left)</span>
+      <span><i class="sw um-bye-sw"></i> bye week</span>
+    </div>
+    <p class="hint" style="margin-top:10px">Numbers = how many of your ${totalEntries} entries can still use that
+      team. Higher = more open. Availability only drops when an entry actually uses a team, so it holds across
+      future weeks until then. Sorted most-open first to spotlight teams you haven't burned.</p>`;
+  if (loading) loading.outerHTML = html;
+}
+
 // ============================================================
 //  Best Loser scoring — how likely is each team to LOSE this week?
 //  Higher score = better "loser" pick. Built from Vegas lines (which
