@@ -3351,6 +3351,7 @@ async function fetchPowerRatings(uptoWeek) {
   const ratingSource = {};  // abbr -> "current" | "blend" | "prior"
   const ratingDetail = {};  // abbr -> composition info for the breakdown UI
   const roadGap = {};       // abbr -> home pts/gm minus away pts/gm (own team's home/road split)
+  const roadSplit = {};     // abbr -> { home, away } raw net pts/gm for each
   const allAbbrs = new Set([...Object.keys(totals), ...Object.keys(prior.overall), ...Object.keys(prior.home), ...Object.keys(prior.away)]);
 
   allAbbrs.forEach(ab => {
@@ -3366,7 +3367,10 @@ async function fetchPowerRatings(uptoWeek) {
       ratingSource[ab] = overall.src;
       ratingDetail[ab] = overall;
     }
-    if (homeB && awayB) roadGap[ab] = homeB.val - awayB.val;
+    if (homeB && awayB) {
+      roadGap[ab] = homeB.val - awayB.val;
+      roadSplit[ab] = { home: homeB.val, away: awayB.val };
+    }
   });
 
   window._powerCache = ratings;
@@ -3374,6 +3378,7 @@ async function fetchPowerRatings(uptoWeek) {
   window._powerSource = ratingSource;
   window._powerDetail = ratingDetail;
   window._roadGap = roadGap;
+  window._roadSplit = roadSplit;
   return ratings;
 }
 // points-per-game differential → win-probability-style strength percentile.
@@ -3569,11 +3574,13 @@ async function loadMatchups(week) {
           // replaces a flat guess with real per-team road performance.
           if (side === "away") {
             const gap = window._roadGap?.[ab];   // home pts/gm − away pts/gm, for THIS team
-            if (gap != null) {
+            const split = window._roadSplit?.[ab];
+            if (gap != null && split) {
               const adjRoad = Math.max(-0.04, Math.min(0.04, gap * 0.006));
               lossProb += adjRoad;
-              const sign = gap >= 0 ? "+" : "";
-              steps.push({ label: `Road tendency (net scoring margin: ${sign}${gap.toFixed(1)} pts/gm better at home — offense & defense combined)`, val: `${adjRoad >= 0 ? "+" : ""}${(adjRoad*100).toFixed(1)}%` });
+              const roadSign = split.away >= 0 ? "+" : "";
+              const homeSign = split.home >= 0 ? "+" : "";
+              steps.push({ label: `Road performance: ${roadSign}${split.away.toFixed(1)} net pts/gm on the road (vs ${homeSign}${split.home.toFixed(1)} at home)`, val: `${adjRoad >= 0 ? "+" : ""}${(adjRoad*100).toFixed(1)}%` });
             } else {
               lossProb += 0.02;
               steps.push({ label: "Road team (no split data yet)", val: "+2%" });
