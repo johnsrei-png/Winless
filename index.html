@@ -3557,7 +3557,7 @@ async function loadMatchups(week) {
               steps.push({ label: `↳ using ${CURRENT_SEASON - 1} season (no ${CURRENT_SEASON} games yet)`, val: "" });
             }
             const srcTxt = src === "prior" ? `, ${CURRENT_SEASON - 1} season` : src === "blend" ? `, blended` : "";
-            steps.push({ label: `Opponent power rating (${sign}${oppPower.toFixed(1)} pts/gm${srcTxt})`, val: `${adj >= 0 ? "+" : ""}${Math.round(adj*100)}%` });
+            steps.push({ label: `Opponent power rating (${sign}${oppPower.toFixed(1)} net pts/gm${srcTxt})`, val: `${adj >= 0 ? "+" : ""}${Math.round(adj*100)}%` });
           } else if (oppWinPct != null) {
             const adj = (oppWinPct - 0.5) * 0.12;
             lossProb += adj;
@@ -3573,7 +3573,7 @@ async function loadMatchups(week) {
               const adjRoad = Math.max(-0.04, Math.min(0.04, gap * 0.006));
               lossProb += adjRoad;
               const sign = gap >= 0 ? "+" : "";
-              steps.push({ label: `Road tendency (plays ${sign}${gap.toFixed(1)} pts/gm better at home)`, val: `${adjRoad >= 0 ? "+" : ""}${(adjRoad*100).toFixed(1)}%` });
+              steps.push({ label: `Road tendency (net scoring margin: ${sign}${gap.toFixed(1)} pts/gm better at home — offense & defense combined)`, val: `${adjRoad >= 0 ? "+" : ""}${(adjRoad*100).toFixed(1)}%` });
             } else {
               lossProb += 0.02;
               steps.push({ label: "Road team (no split data yet)", val: "+2%" });
