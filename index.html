@@ -3226,16 +3226,18 @@ function vigFreeProb(mlThis, mlOther) {
 // full team name → abbreviation (The Odds API uses full names)
 const NAME_TO_ABBR = Object.fromEntries(TEAMS.map(([ab, nm]) => [nm, ab]));
 
-// Fetch a full season's point differential (all 18 weeks, final games only).
-// Used as the "prior season" reference for early-season blending. Cached hard —
-// a past season's results never change, so we only ever fetch this once.
+// Fetch a full season's point differential (all 18 weeks, final games only),
+// split into overall / home / away buckets. Used as the "prior season"
+// reference for early-season blending. Cached hard — a past season's results
+// never change, so we only ever fetch this once.
 async function fetchSeasonPowerRatings(year) {
   const cacheKey = "_seasonPowerCache_" + year;
   if (window[cacheKey]) return window[cacheKey];
-  const totals = {};
-  const bump = (ab, pf, pa) => {
-    const t = (totals[ab] ||= { pf: 0, pa: 0, gp: 0 });
-    t.pf += pf; t.pa += pa; t.gp += 1;
+  const totals = {};   // ab -> { all:{pf,pa,gp}, home:{...}, away:{...} }
+  const bump = (ab, bucket, pf, pa) => {
+    const t = (totals[ab] ||= { all: { pf: 0, pa: 0, gp: 0 }, home: { pf: 0, pa: 0, gp: 0 }, away: { pf: 0, pa: 0, gp: 0 } });
+    t.all.pf += pf; t.all.pa += pa; t.all.gp += 1;
+    t[bucket].pf += pf; t[bucket].pa += pa; t[bucket].gp += 1;
   };
   try {
     const weeks = []; for (let w = 1; w <= 18; w++) weeks.push(w);
@@ -3253,16 +3255,22 @@ async function fetchSeasonPowerRatings(year) {
           if (!home || !away) return;
           const hs = parseFloat(home.score), as = parseFloat(away.score);
           if (isNaN(hs) || isNaN(as)) return;
-          if (home.team?.abbreviation) bump(home.team.abbreviation, hs, as);
-          if (away.team?.abbreviation) bump(away.team.abbreviation, as, hs);
+          if (home.team?.abbreviation) bump(home.team.abbreviation, "home", hs, as);
+          if (away.team?.abbreviation) bump(away.team.abbreviation, "away", as, hs);
         });
       } catch (e) { /* skip this week on error */ }
     }));
   } catch (e) { /* prior-season blend is a nicety; teams fall back further to win% */ }
-  const ratings = {};
-  Object.entries(totals).forEach(([ab, t]) => { if (t.gp > 0) ratings[ab] = (t.pf - t.pa) / t.gp; });
-  window[cacheKey] = ratings;
-  return ratings;
+  const diffOf = (t) => t.gp > 0 ? (t.pf - t.pa) / t.gp : null;
+  const result = { overall: {}, home: {}, away: {} };
+  Object.entries(totals).forEach(([ab, t]) => {
+    const o = diffOf(t.all), h = diffOf(t.home), a = diffOf(t.away);
+    if (o != null) result.overall[ab] = o;
+    if (h != null) result.home[ab] = h;
+    if (a != null) result.away[ab] = a;
+  });
+  window[cacheKey] = result;
+  return result;
 }
 
 // ------------------------------------------------------------
@@ -3286,10 +3294,11 @@ async function fetchSeasonPowerRatings(year) {
 const SHRINK_GAMES = 5;   // current-season weight reaches 100% around this many games played
 async function fetchPowerRatings(uptoWeek) {
   if (window._powerCache && window._powerCacheWeek === uptoWeek) return window._powerCache;
-  const totals = {};   // abbr -> { pf, pa, gp }  (current season only)
-  const bump = (ab, pf, pa) => {
-    const t = (totals[ab] ||= { pf: 0, pa: 0, gp: 0 });
-    t.pf += pf; t.pa += pa; t.gp += 1;
+  const totals = {};   // abbr -> { all:{pf,pa,gp}, home:{...}, away:{...} }  (current season only)
+  const bump = (ab, bucket, pf, pa) => {
+    const t = (totals[ab] ||= { all: { pf: 0, pa: 0, gp: 0 }, home: { pf: 0, pa: 0, gp: 0 }, away: { pf: 0, pa: 0, gp: 0 } });
+    t.all.pf += pf; t.all.pa += pa; t.all.gp += 1;
+    t[bucket].pf += pf; t[bucket].pa += pa; t[bucket].gp += 1;
   };
   try {
     const weeksPlayed = [];
@@ -3308,8 +3317,8 @@ async function fetchPowerRatings(uptoWeek) {
           if (!home || !away) return;
           const hs = parseFloat(home.score), as = parseFloat(away.score);
           if (isNaN(hs) || isNaN(as)) return;
-          if (home.team?.abbreviation) bump(home.team.abbreviation, hs, as);
-          if (away.team?.abbreviation) bump(away.team.abbreviation, as, hs);
+          if (home.team?.abbreviation) bump(home.team.abbreviation, "home", hs, as);
+          if (away.team?.abbreviation) bump(away.team.abbreviation, "away", as, hs);
         });
       } catch (e) { /* skip this week on error */ }
     }));
@@ -3317,37 +3326,54 @@ async function fetchPowerRatings(uptoWeek) {
 
   // pull in a prior-season blend only when it could actually matter (early season) —
   // no need once everyone has a full current-season sample.
-  const maxGp = Math.max(0, ...Object.values(totals).map(t => t.gp));
-  let priorRatings = {};
+  const maxGp = Math.max(0, ...Object.values(totals).map(t => t.all.gp));
+  let prior = { overall: {}, home: {}, away: {} };
   if (maxGp < SHRINK_GAMES) {
-    priorRatings = await fetchSeasonPowerRatings(CURRENT_SEASON - 1);
+    prior = await fetchSeasonPowerRatings(CURRENT_SEASON - 1);
   }
 
-  const ratings = {};       // final blended abbr -> pts/gm
-  const ratingSource = {};  // abbr -> "current" | "blend" | "prior" | "none" (for the breakdown UI)
-  const allAbbrs = new Set([...Object.keys(totals), ...Object.keys(priorRatings)]);
+  const diffOf = (t) => t && t.gp > 0 ? (t.pf - t.pa) / t.gp : null;
+  // blend a single bucket (overall / home / away) with shrinkage toward the prior-season value
+  const blendBucket = (curT, curGpForWeight, shrinkGames, priorVal) => {
+    const curDiff = diffOf(curT);
+    const gp = curT ? curT.gp : 0;
+    if (curDiff != null && gp >= shrinkGames) return { val: curDiff, src: "current", curDiff, curGp: gp, priorVal: null, weight: 1 };
+    if (curDiff != null && priorVal != null) {
+      const w = gp / shrinkGames;
+      return { val: curDiff * w + priorVal * (1 - w), src: "blend", curDiff, curGp: gp, priorVal, weight: w };
+    }
+    if (priorVal != null) return { val: priorVal, src: "prior", curDiff: null, curGp: gp, priorVal, weight: 0 };
+    if (curDiff != null) return { val: curDiff, src: "current", curDiff, curGp: gp, priorVal: null, weight: 1 };
+    return null;
+  };
+
+  const ratings = {};       // final blended overall abbr -> pts/gm (used for opponent strength)
+  const ratingSource = {};  // abbr -> "current" | "blend" | "prior"
+  const ratingDetail = {};  // abbr -> composition info for the breakdown UI
+  const roadGap = {};       // abbr -> home pts/gm minus away pts/gm (own team's home/road split)
+  const allAbbrs = new Set([...Object.keys(totals), ...Object.keys(prior.overall), ...Object.keys(prior.home), ...Object.keys(prior.away)]);
+
   allAbbrs.forEach(ab => {
     const t = totals[ab];
-    const curDiff = t && t.gp > 0 ? (t.pf - t.pa) / t.gp : null;
-    const priorDiff = priorRatings[ab] != null ? priorRatings[ab] : null;
-    const gp = t ? t.gp : 0;
+    const overall = blendBucket(t?.all, null, SHRINK_GAMES, prior.overall[ab] ?? null);
+    // home/away buckets typically have half the games of "overall" by kickoff, so they
+    // reach full current-season weight around HALF the overall shrink threshold in games.
+    const homeB = blendBucket(t?.home, null, Math.max(2, Math.round(SHRINK_GAMES / 2)), prior.home[ab] ?? null);
+    const awayB = blendBucket(t?.away, null, Math.max(2, Math.round(SHRINK_GAMES / 2)), prior.away[ab] ?? null);
 
-    if (curDiff != null && gp >= SHRINK_GAMES) {
-      ratings[ab] = curDiff; ratingSource[ab] = "current";
-    } else if (curDiff != null && priorDiff != null) {
-      const w = gp / SHRINK_GAMES;   // 0..1 weight toward current season
-      ratings[ab] = curDiff * w + priorDiff * (1 - w);
-      ratingSource[ab] = "blend";
-    } else if (priorDiff != null) {
-      ratings[ab] = priorDiff; ratingSource[ab] = "prior";
-    } else if (curDiff != null) {
-      ratings[ab] = curDiff; ratingSource[ab] = "current";
+    if (overall) {
+      ratings[ab] = overall.val;
+      ratingSource[ab] = overall.src;
+      ratingDetail[ab] = overall;
     }
+    if (homeB && awayB) roadGap[ab] = homeB.val - awayB.val;
   });
 
   window._powerCache = ratings;
   window._powerCacheWeek = uptoWeek;
   window._powerSource = ratingSource;
+  window._powerDetail = ratingDetail;
+  window._roadGap = roadGap;
   return ratings;
 }
 // points-per-game differential → win-probability-style strength percentile.
@@ -3521,7 +3547,16 @@ async function loadMatchups(week) {
             lossProb += adj;
             const sign = oppPower >= 0 ? "+" : "";
             const src = window._powerSource?.[oppAbbr];
-            const srcTxt = src === "prior" ? `, ${CURRENT_SEASON - 1} season` : src === "blend" ? `, blended w/ ${CURRENT_SEASON - 1}` : "";
+            const det = window._powerDetail?.[oppAbbr];
+            // show the underlying math when it's not a plain single-season number
+            if (det && src === "blend") {
+              steps.push({ label: `↳ opp ${CURRENT_SEASON} so far (${det.curGp} gm)`, val: `${det.curDiff >= 0 ? "+" : ""}${det.curDiff.toFixed(1)} pts/gm` });
+              steps.push({ label: `↳ opp ${CURRENT_SEASON - 1} season`, val: `${det.priorVal >= 0 ? "+" : ""}${det.priorVal.toFixed(1)} pts/gm` });
+              steps.push({ label: `↳ blend weight`, val: `${Math.round(det.weight*100)}% current` });
+            } else if (det && src === "prior") {
+              steps.push({ label: `↳ using ${CURRENT_SEASON - 1} season (no ${CURRENT_SEASON} games yet)`, val: "" });
+            }
+            const srcTxt = src === "prior" ? `, ${CURRENT_SEASON - 1} season` : src === "blend" ? `, blended` : "";
             steps.push({ label: `Opponent power rating (${sign}${oppPower.toFixed(1)} pts/gm${srcTxt})`, val: `${adj >= 0 ? "+" : ""}${Math.round(adj*100)}%` });
           } else if (oppWinPct != null) {
             const adj = (oppWinPct - 0.5) * 0.12;
@@ -3529,10 +3564,20 @@ async function loadMatchups(week) {
             const pct = Math.round(oppWinPct * 100);
             steps.push({ label: `Opponent strength (${pct}% win)`, val: `${adj >= 0 ? "+" : ""}${Math.round(adj*100)}%` });
           }
-          // home/away nudge: road teams lose a touch more often
+          // home/away nudge: team-specific, from each team's ACTUAL home vs road point
+          // differential (blended with prior season the same way as the power rating) —
+          // replaces a flat guess with real per-team road performance.
           if (side === "away") {
-            lossProb += 0.02;
-            steps.push({ label: "Road team", val: "+2%" });
+            const gap = window._roadGap?.[ab];   // home pts/gm − away pts/gm, for THIS team
+            if (gap != null) {
+              const adjRoad = Math.max(-0.04, Math.min(0.04, gap * 0.006));
+              lossProb += adjRoad;
+              const sign = gap >= 0 ? "+" : "";
+              steps.push({ label: `Road tendency (plays ${sign}${gap.toFixed(1)} pts/gm better at home)`, val: `${adjRoad >= 0 ? "+" : ""}${(adjRoad*100).toFixed(1)}%` });
+            } else {
+              lossProb += 0.02;
+              steps.push({ label: "Road team (no split data yet)", val: "+2%" });
+            }
           }
           // rest: short week (≤4 days, e.g. a Thursday game off a Sunday) is a small
           // disadvantage; extra rest (≥12 days, coming off a bye) is a small edge.
