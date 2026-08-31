@@ -1255,17 +1255,19 @@ async function renderWeek() {
     sbGet(`entries?order=id.asc`).catch(() => []),
   ]);
 
-  // A team is "dead" for picking if EVERY entry has already used it in a prior week —
-  // it can't be placed anywhere, so block it on the selection screen.
-  const entryIds = (entries || []).map(e => e.id);
-  const entriesUsingTeam = {};  // team -> Set(entryId)
+  // Availability is per ALIVE entry: a dead (eliminated) entry can't use any team,
+  // so it shouldn't count toward how many entries can still use a given team.
+  const liveEntryIds = (entries || []).filter(e => e.status !== "dead").map(e => e.id);
+  const entriesUsingTeam = {};  // team -> Set(entryId) that already used it (prior weeks)
   (allAssigns || []).forEach(a => {
     (entriesUsingTeam[a.team] ||= new Set()).add(a.entry_id);
   });
+  // A team is "dead" for picking if every ALIVE entry has already used it — it can't be placed anywhere.
   const deadTeams = new Set();
-  if (entryIds.length) {
-    Object.entries(entriesUsingTeam).forEach(([team, set]) => {
-      if (entryIds.every(id => set.has(id))) deadTeams.add(team);
+  if (liveEntryIds.length) {
+    TEAMS.forEach(([ab]) => {
+      const used = entriesUsingTeam[ab] || new Set();
+      if (liveEntryIds.every(id => used.has(id))) deadTeams.add(ab);
     });
   }
 
@@ -1398,7 +1400,7 @@ async function renderWeek() {
   // load matchups + compute Best Loser scores from ESPN (client-side) into the side panel
   loadMatchups(wk.week_number);
   // build the forward-looking availability matrix under the picks
-  renderUsageMatrix(wk.week_number, entriesUsingTeam, entryIds);
+  renderUsageMatrix(wk.week_number, entriesUsingTeam, liveEntryIds);
 
   // prevent picking the same team twice — live dedupe styling
   const selects = () => Array.from(app.querySelectorAll("select.team"));
@@ -3045,11 +3047,23 @@ async function peelTile(tileIndex, week, typeByTile, valueByTile, multiplierArme
 //  Availability is constant across future weeks (until an entry uses it),
 //  so the per-week dimension exists to flag BYE weeks (team can't be picked).
 // ============================================================
-async function renderUsageMatrix(startWeek, entriesUsingTeam, entryIds) {
+async function renderUsageMatrix(startWeek, entriesUsingTeam, liveEntryIds) {
   const box = document.getElementById("usagematrix");
   if (!box) return;
+
+  // Avoid the flicker: if we've already built the matrix for this exact state
+  // (same week + same availability), reuse cached HTML instead of re-fetching
+  // ESPN and flashing "loading" on every background refresh.
+  const sig = startWeek + "|" + liveEntryIds.slice().sort().join(",") + "|" +
+    TEAMS.map(([ab]) => (entriesUsingTeam[ab]?.size || 0)).join("");
+  if (window._umSig === sig && window._umHtml) {
+    box.innerHTML = window._umHtml;
+    return;
+  }
+
   const loading = box.querySelector(".um-loading");
-  const totalEntries = entryIds.length || 6;
+  const totalLive = liveEntryIds.length;
+  const liveSet = new Set(liveEntryIds);
   const WEEKS_AHEAD = 6;
   const weeks = [];
   for (let w = startWeek; w < startWeek + WEEKS_AHEAD && w <= 18; w++) weeks.push(w);
@@ -3072,8 +3086,13 @@ async function renderUsageMatrix(startWeek, entriesUsingTeam, entryIds) {
     }));
   } catch (e) { /* byes are a nicety; continue without */ }
 
-  // availability per team = entries that have NOT used it
-  const availOf = (ab) => totalEntries - (entriesUsingTeam[ab]?.size || 0);
+  // availability = ALIVE entries that have NOT already used this team
+  const availOf = (ab) => {
+    const used = entriesUsingTeam[ab] || new Set();
+    let n = 0;
+    liveSet.forEach(id => { if (!used.has(id)) n++; });
+    return n;
+  };
 
   // sort teams: most-open first, then alphabetical — surfaces golden opportunities up top
   const rowsData = TEAMS.map(([ab, nm]) => ({ ab, nm, avail: availOf(ab) }))
@@ -3083,7 +3102,7 @@ async function renderUsageMatrix(startWeek, entriesUsingTeam, entryIds) {
     const playing = byeByWeek[w];
     if (playing && !playing.has(ab)) return `<td class="um-bye">BYE</td>`;
     const a = availOf(ab);
-    const cls = a === 0 ? "um-dead" : a >= totalEntries ? "um-open" : "um-part";
+    const cls = a === 0 ? "um-dead" : a >= totalLive ? "um-open" : "um-part";
     return `<td class="${cls}">${a}</td>`;
   };
 
@@ -3097,14 +3116,17 @@ async function renderUsageMatrix(startWeek, entriesUsingTeam, entryIds) {
   const html = `
     <div class="um-scroll"><table class="um-table">${head}${body}</table></div>
     <div class="um-legend">
-      <span><i class="sw um-open-sw"></i> open on all ${totalEntries}</span>
+      <span><i class="sw um-open-sw"></i> open on all ${totalLive}</span>
       <span><i class="sw um-part-sw"></i> partly used</span>
       <span><i class="sw um-dead-sw"></i> dead (0 left)</span>
       <span><i class="sw um-bye-sw"></i> bye week</span>
     </div>
-    <p class="hint" style="margin-top:10px">Numbers = how many of your ${totalEntries} entries can still use that
-      team. Higher = more open. Availability only drops when an entry actually uses a team, so it holds across
-      future weeks until then. Sorted most-open first to spotlight teams you haven't burned.</p>`;
+    <p class="hint" style="margin-top:10px">Numbers = how many of your <b>${totalLive} still-alive</b> entries can
+      still use that team (eliminated entries don't count). Higher = more open. Availability only drops when a
+      live entry uses a team, so it holds across future weeks until then. Sorted most-open first to spotlight
+      teams you haven't burned.</p>`;
+  window._umSig = sig;
+  window._umHtml = `<div class="section-title">Team Availability — how many entries can still use each team</div>` + html;
   if (loading) loading.outerHTML = html;
 }
 
