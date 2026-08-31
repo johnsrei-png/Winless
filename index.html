@@ -786,7 +786,7 @@
   .bl-meta { font-size: 11px; color: var(--ink-faint); font-family: 'Barlow Semi Condensed', sans-serif; margin-top: 1px; }
 
   /* ---- Team availability matrix ---- */
-  .usage-matrix { margin-top: 26px; }
+  .usage-matrix { margin-top: 22px; }
   .um-loading { font-size: 13px; color: var(--ink-faint); padding: 8px 2px; }
   .um-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; }
   .um-table { border-collapse: collapse; width: 100%; font-size: 13px; }
@@ -1379,6 +1379,11 @@ async function renderWeek() {
               ranking and start placing entries. Once locked, picks are final.</div>
             <button class="btn btn-lock" id="lockweek">Lock week &amp; reveal</button>
           </div>` : ""}
+
+        <div class="usage-matrix" id="usagematrix">
+          <div class="section-title">Team Availability — how many entries can still use each team</div>
+          <div class="um-loading">Loading availability…</div>
+        </div>
       </div>
       <aside class="matchups" id="matchups">
         <div class="section-title">Best Losers — Week ${wk.week_number}</div>
@@ -1388,11 +1393,6 @@ async function renderWeek() {
         </div>
         <div class="matchup-loading">Crunching the lines…</div>
       </aside>
-    </div>
-
-    <div class="usage-matrix" id="usagematrix">
-      <div class="section-title">Team Availability — how many entries can still use each team</div>
-      <div class="um-loading">Loading availability…</div>
     </div>`;
 
   // load matchups + compute Best Loser scores from ESPN (client-side) into the side panel
