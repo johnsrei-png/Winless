@@ -3555,12 +3555,18 @@ async function loadMatchups(week) {
             steps.push({ label: "No line posted", val: "50% base" });
           }
 
-          // If moneyline was primary, blend the spread in lightly as a cross-check (¼ weight)
-          if (primary === "ml" && teamSpread != null) {
-            const sp = spreadToLossProb(teamSpread);
-            const before = lossProb;
+          // If moneyline was primary, blend the spread in lightly as a cross-check (¼ weight).
+          // Prefer the SAME consensus source's spread (con.spread) over ESPN's independently
+          // fetched line — mixing two different sources for the moneyline vs. the spread can
+          // produce internally-contradicting cards (a big favorite by spread, near-even by ML)
+          // when the two feeds disagree or briefly mismatch.
+          const crossCheckSpread = (con && con.spread != null) ? con.spread : teamSpread;
+          const crossCheckIsConsensus = con && con.spread != null;
+          if (primary === "ml" && crossCheckSpread != null) {
+            const sp = spreadToLossProb(crossCheckSpread);
             lossProb = lossProb * 0.75 + sp * 0.25;
-            steps.push({ label: `Spread cross-check ${teamSpread > 0 ? "+" + teamSpread : teamSpread}`, val: `→ ${Math.round(lossProb*100)}%` });
+            const srcNote = crossCheckIsConsensus ? "" : " (ESPN, no consensus spread)";
+            steps.push({ label: `Spread cross-check ${crossCheckSpread > 0 ? "+" + crossCheckSpread : crossCheckSpread}${srcNote}`, val: `→ ${Math.round(lossProb*100)}%` });
           }
 
           // LINE MOVEMENT: informational only (not folded into the score yet — we're
