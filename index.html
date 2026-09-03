@@ -3929,6 +3929,8 @@ async function computeBestLoserScores(week) {
           const steps = [];   // human-readable breakdown of the score
           const con = consensus[ab];       // consensus odds for this team, if available
           let lossProb, primary;
+          const MAX_PLAUSIBLE_SPREAD = 30;   // no real NFL spread has ever exceeded ~27
+          const consensusSpreadOk = con && con.spread != null && Math.abs(con.spread) <= MAX_PLAUSIBLE_SPREAD;
 
           // PRIMARY: vig-free consensus moneyline (sharpest input). Falls back to
           // consensus spread, then ESPN's single line, then a coin flip.
@@ -3937,12 +3939,15 @@ async function computeBestLoserScores(week) {
             lossProb = 1 - winProb;
             primary = "ml";
             steps.push({ label: `Consensus moneyline ${con.ml > 0 ? "+" + con.ml : con.ml} (${con.books} books, vig-free)`, val: `${Math.round(lossProb*100)}% base` });
-          } else if (con && con.spread != null) {
+          } else if (consensusSpreadOk) {
             lossProb = spreadToLossProb(con.spread);
             teamSpread = con.spread;
             primary = "spread-consensus";
             steps.push({ label: `Consensus spread ${con.spread > 0 ? "+" + con.spread : con.spread} (${con.books} books)`, val: `${Math.round(lossProb*100)}% base` });
           } else if (teamSpread != null) {
+            if (con && con.spread != null) {
+              steps.push({ label: `⚠️ Consensus spread ${con.spread} looked implausible — ignored, using ESPN's line instead`, val: "" });
+            }
             lossProb = spreadToLossProb(teamSpread);
             primary = "spread-espn";
             steps.push({ label: `Spread ${teamSpread > 0 ? "+" + teamSpread + " (underdog)" : teamSpread + " (favorite)"} (ESPN)`, val: `${Math.round(lossProb*100)}% base` });
@@ -3958,7 +3963,11 @@ async function computeBestLoserScores(week) {
           // another) when the two feeds disagree or briefly mismatch. Reassigning teamSpread
           // itself (not just a local variable) means every downstream use — the header tag,
           // the cross-check step, anywhere else — reads the same consistent number.
-          const crossCheckIsConsensus = con && con.spread != null;
+          // (consensusSpreadOk already applies the plausibility guard, computed above.)
+          const crossCheckIsConsensus = consensusSpreadOk;
+          if (con && con.spread != null && !consensusSpreadOk && primary === "ml") {
+            steps.push({ label: `⚠️ Consensus spread ${con.spread} looked implausible — ignored, using ESPN's line instead`, val: "" });
+          }
           if (crossCheckIsConsensus) teamSpread = con.spread;
           if (primary === "ml" && teamSpread != null) {
             const sp = spreadToLossProb(teamSpread);
