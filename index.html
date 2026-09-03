@@ -1390,7 +1390,8 @@ async function renderWeek() {
     </div>
     <div class="tracker">${trackerHtml}</div>
     <p class="hint" style="margin:-14px 0 18px 2px">🎯 <b>Possession arrow this week: ${arrowHolderName(wk.week_number) || "—"}</b> —
-      breaks any tie for weekly wins/pot, rotating one player per week.</p>`;
+      final tiebreaker for weekly wins/pot, only used if two players are tied on both record <i>and</i>
+      confidence points. Rotates one player per week.</p>`;
 
   if (wk.status === "locked" || wk.status === "resolved") {
     await renderBoard(wk, headerHtml);
