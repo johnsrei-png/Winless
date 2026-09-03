@@ -1086,6 +1086,27 @@ function clearAuth(pid) {
 let BOARD_EDIT_MODE = false;
 let MY_PREFS = null;   // { theme, accent, bg, font } for the signed-in player
 
+// ------------------------------------------------------------
+// Weekly tiebreaker: a rotating "possession arrow" instead of submission
+// time. Since everyone's on the same team, rewarding whoever rushed their
+// picks in first didn't actually benefit anyone — a rotating arrow is
+// fairer and removes any incentive to rush. One player holds the arrow
+// each week (cycling through everyone, in order), and it decides ties two
+// ways: the arrow holder WINS a tie for best record (peels, weekly wins),
+// and is PROTECTED from being picked as worst record (the pot penalty) —
+// consistent "benefit of the doubt" in either direction.
+// ------------------------------------------------------------
+function arrowPriorityOrder(week) {
+  if (!PLAYERS.length) return [];
+  const idx = (((week - 1) % PLAYERS.length) + PLAYERS.length) % PLAYERS.length;
+  return [...PLAYERS.slice(idx), ...PLAYERS.slice(0, idx)].map(p => p.id);
+}
+function arrowHolderName(week) {
+  const order = arrowPriorityOrder(week);
+  if (!order.length) return null;
+  return PLAYERS.find(p => p.id === order[0])?.name || order[0];
+}
+
 // Preset themes. Each sets the core CSS vars; accent/bg/font can be overridden per player.
 const THEMES = {
   "stadium": {
@@ -1367,7 +1388,9 @@ async function renderWeek() {
         <div class="stat"><div class="num">${picksReq}</div><div class="lbl">Picks Each</div></div>
       </div>
     </div>
-    <div class="tracker">${trackerHtml}</div>`;
+    <div class="tracker">${trackerHtml}</div>
+    <p class="hint" style="margin:-14px 0 18px 2px">🎯 <b>Possession arrow this week: ${arrowHolderName(wk.week_number) || "—"}</b> —
+      breaks any tie for weekly wins/pot, rotating one player per week.</p>`;
 
   if (wk.status === "locked" || wk.status === "resolved") {
     await renderBoard(wk, headerHtml);
@@ -1400,12 +1423,9 @@ async function renderWeek() {
           <button class="btn btn-ghost" id="editpicks">Unlock &amp; edit my list</button>
           ${allIn ? `<button class="btn btn-lock" id="lockweek">Lock week &amp; reveal</button>` : ""}
         </div>
-        <div class="locked-warn">⚠️ Editing resubmits your list and <b>resets your submission time</b>,
-          which is the tiebreaker for weekly wins and the pot. Only edit if you need to change a pick.</div>
       </div>`;
 
     document.getElementById("editpicks").onclick = () => {
-      if (!confirm("Editing resubmits your list and resets your submission time — the tiebreaker for weekly wins and the pot. Continue?")) return;
       window._pickEditMode = true; renderWeek();
     };
     const lockBtn2 = document.getElementById("lockweek");
@@ -1441,7 +1461,7 @@ async function renderWeek() {
         <div class="section-title">Your ranked losers — most confident at the top</div>
         <p class="hint">Pick ${picksReq} different teams you think will lose this week, ranked by confidence.
           Rank 1 is worth ${picksReq} points, down to 1 point at the bottom. Your points get summed with
-          Tyler's and Kurt's to build the master ranking${iSubmitted ? " — resubmitting resets your submission time, which breaks ties for weekly wins and the pot." : "."}</p>
+          Tyler's and Kurt's to build the master ranking${iSubmitted ? " — resubmit any time before lock to change your list." : "."}</p>
         <div class="rank-list">${slots}</div>
         ${deadTeams.size ? `<p class="hint dead-note">Hidden — used by all six entries, can't be placed anywhere:
           ${[...deadTeams].map(ab => TEAM_NAME[ab] || ab).sort().join(", ")}.</p>` : ""}
@@ -2075,11 +2095,6 @@ async function computePot() {
   const reqByWeek = {}; (weeks || []).forEach(w => reqByWeek[w.week_number] = w.picks_required);
   const typeByTile = {}, valueByTile = {};
   (tileValues || []).forEach(t => { typeByTile[t.tile_index] = t.type || "money"; valueByTile[t.tile_index] = Number(t.amount); });
-  const firstSubByWeek = {};
-  (subs || []).forEach(s => {
-    if (!s.first_submitted_at) return;
-    (firstSubByWeek[s.week_number] ||= {})[s.player_id] = s.first_submitted_at;
-  });
   const seasonCorrect = {}; PLAYERS.forEach(p => seasonCorrect[p.id] = 0);
   const seasonConf = {}; PLAYERS.forEach(p => seasonConf[p.id] = 0);
   (picks || []).forEach(p => {
@@ -2102,15 +2117,18 @@ async function computePot() {
     });
     return s;
   };
-  const subTimeFor = (wk, id) => (firstSubByWeek[wk]?.[id]) || "9999";
 
   const weeklyWins = {}; PLAYERS.forEach(p => weeklyWins[p.id] = 0);
   const potFromPenalty = [];
   gradedWeekNums.forEach(wk => {
     const s = weekRecords(wk);
-    const order = PLAYERS.map(p => ({ id: p.id, ...s[p.id], seasonCorrect: seasonCorrect[p.id], sub: subTimeFor(wk, p.id) }));
-    const best = order.slice().sort((a,b)=> b.correct-a.correct || b.conf-a.conf || a.sub.localeCompare(b.sub))[0];
-    const worst = order.slice().sort((a,b)=> a.correct-b.correct || a.conf-b.conf || b.sub.localeCompare(a.sub))[0];
+    const arrowOrder = arrowPriorityOrder(wk);
+    const rankOf = id => arrowOrder.indexOf(id);
+    const order = PLAYERS.map(p => ({ id: p.id, ...s[p.id], seasonCorrect: seasonCorrect[p.id] }));
+    // best: most correct, then conf, then the arrow holder wins any remaining tie
+    const best = order.slice().sort((a,b)=> b.correct-a.correct || b.conf-a.conf || rankOf(a.id)-rankOf(b.id))[0];
+    // worst: fewest correct, then lowest conf, then the arrow holder is PROTECTED (picked last)
+    const worst = order.slice().sort((a,b)=> a.correct-b.correct || a.conf-b.conf || rankOf(b.id)-rankOf(a.id))[0];
     if (best) weeklyWins[best.id]++;
     if (worst) potFromPenalty.push({ player_id: worst.id, amount: WEEKLY_ANTE, week: wk });
   });
@@ -2480,13 +2498,15 @@ async function renderStandings() {
   ])].sort((a,b)=>a-b);
   const gridHead = `<tr><th class="name">Week</th>${ranked.map(r=>`<th>${r.name}</th>`).join("")}</tr>`;
   const gridBody = playedWeeks.map(wk => {
-    // determine this week's winner: most correct → confidence → earliest submission
+    // determine this week's winner: most correct → confidence → possession arrow
+    const arrowOrder = arrowPriorityOrder(wk);
+    const rankOf = id => { const idx = arrowOrder.indexOf(id); return idx === -1 ? 999 : idx; };  // non-humans (Only Losses) never win an arrow tie
     const contenders = ranked
       .map(r => ({ id: r.id, w: weekly[r.id][wk] }))
       .filter(x => x.w)
-      .map(x => ({ id: x.id, correct: x.w.correct, conf: x.w.conf, sub: (firstSubByWeek[wk]?.[x.id]) || "9999" }));
+      .map(x => ({ id: x.id, correct: x.w.correct, conf: x.w.conf }));
     const winner = contenders.length
-      ? contenders.slice().sort((a,b)=> b.correct-a.correct || b.conf-a.conf || a.sub.localeCompare(b.sub))[0]
+      ? contenders.slice().sort((a,b)=> b.correct-a.correct || b.conf-a.conf || rankOf(a.id)-rankOf(b.id))[0]
       : null;
     // only highlight if the week is actually decided (someone has a non-zero record or it's graded)
     const decided = contenders.some(c => c.correct > 0 || c.conf > 0);
@@ -2573,18 +2593,18 @@ async function renderStandings() {
     });
     return s;
   }
-  const subTimeFor = (wk, id) => (firstSubByWeek[wk]?.[id]) || "9999";
-
   // weekly wins per player + pot contributions from worst record
   const weeklyWins = {}; PLAYERS.forEach(p => weeklyWins[p.id] = 0);
   const potFromPenalty = [];   // {player_id, amount, week}
   gradedWeekNums.forEach(wk => {
     const s = weekRecords(wk);
-    const order = PLAYERS.map(p => ({ id: p.id, ...s[p.id], seasonCorrect: tally[p.id].correct, sub: subTimeFor(wk, p.id) }));
-    // best: most correct, then conf, then earliest submission
-    const best = order.slice().sort((a,b)=> b.correct-a.correct || b.conf-a.conf || a.sub.localeCompare(b.sub))[0];
-    // worst: fewest correct, then lowest conf, then LATEST submission (straggler pays)
-    const worst = order.slice().sort((a,b)=> a.correct-b.correct || a.conf-b.conf || b.sub.localeCompare(a.sub))[0];
+    const arrowOrder = arrowPriorityOrder(wk);
+    const rankOf = id => arrowOrder.indexOf(id);
+    const order = PLAYERS.map(p => ({ id: p.id, ...s[p.id], seasonCorrect: tally[p.id].correct }));
+    // best: most correct, then conf, then the arrow holder wins any remaining tie
+    const best = order.slice().sort((a,b)=> b.correct-a.correct || b.conf-a.conf || rankOf(a.id)-rankOf(b.id))[0];
+    // worst: fewest correct, then lowest conf, then the arrow holder is PROTECTED (picked last)
+    const worst = order.slice().sort((a,b)=> a.correct-b.correct || a.conf-b.conf || rankOf(b.id)-rankOf(a.id))[0];
     if (best) weeklyWins[best.id]++;
     if (worst) potFromPenalty.push({ player_id: worst.id, amount: WEEKLY_ANTE, week: wk });
   });
@@ -2648,9 +2668,10 @@ async function renderStandings() {
           </div>`).join("")}
       </div>
       <p class="field-note">The pot fills $${WEEKLY_ANTE} each week from whoever had the <b>worst</b> record
-        (confidence, then latest submission, breaks ties), every 💀 penalty tile peeled, and $5/player any week
-        <b>🤖 Only Losses</b> sweeps all three of you. At season's end the whole pot is <b>winner-take-all</b> to
-        whoever won the <b>most weekly wins</b> — ties broken by overall season record, then total confidence.</p>
+        (confidence, then a rotating "possession arrow" that protects one player's tiebreak each week, breaks
+        ties), every 💀 penalty tile peeled, and $5/player any week <b>🤖 Only Losses</b> sweeps all three of you.
+        At season's end the whole pot is <b>winner-take-all</b> to whoever won the <b>most weekly wins</b> —
+        ties broken by overall season record, then total confidence.</p>
     </div>`;
 
   // per-player peel breakdown for the drill-down
@@ -3262,7 +3283,7 @@ function generateTileValues() {
 
 // Compute the winner of a given week from graded picks.
 // Best record (correct) that week; ties broken by confidence points.
-function weeklyWinner(picks, week, reqByWeek, firstSubByWeek) {
+function weeklyWinner(picks, week, reqByWeek) {
   const stat = {};
   picks.filter(p => p.week_number === week && p.result && p.result !== "pending")
     .forEach(p => {
@@ -3272,11 +3293,12 @@ function weeklyWinner(picks, week, reqByWeek, firstSubByWeek) {
       s.total++;
       if (p.result === "correct") { s.correct++; s.conf += pts; }
     });
-  // first-submission time for this week (earlier = wins ties); missing sorts last
-  const subTime = (id) => (firstSubByWeek?.[week]?.[id]) || "9999";
+  // possession arrow: whoever holds it this week wins any remaining tie
+  const arrowOrder = arrowPriorityOrder(week);
+  const rankOf = id => { const idx = arrowOrder.indexOf(id); return idx === -1 ? 999 : idx; };
   const ranked = Object.entries(stat)
-    .map(([id, s]) => ({ id, ...s, sub: subTime(id) }))
-    .sort((a, b) => b.correct - a.correct || b.conf - a.conf || a.sub.localeCompare(b.sub));
+    .map(([id, s]) => ({ id, ...s }))
+    .sort((a, b) => b.correct - a.correct || b.conf - a.conf || rankOf(a.id) - rankOf(b.id));
   return ranked.length ? ranked[0] : null;
 }
 
@@ -3334,7 +3356,7 @@ async function renderAward() {
     const used = peelsByWeek[wk] || 0;
     const budget = PEELS_PER_WEEK + (multsByWeek[wk] || 0);
     if (used < budget) {
-      const w = weeklyWinner(picks, wk, reqByWeek, firstSubByWeek);
+      const w = weeklyWinner(picks, wk, reqByWeek);
       if (w) { pendingWeek = wk; pendingWinner = w; peelsUsedThisWeek = used; budgetThisWeek = budget; break; }
     }
   }
