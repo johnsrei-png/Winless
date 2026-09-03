@@ -3834,30 +3834,38 @@ async function fetchRestDays(week) {
 
 // Fetch consensus multi-book odds from our Netlify function. Returns a map
 // keyed by team abbr → { ml, spread, oppAbbr }. Cached per page load.
-async function fetchConsensusOdds() {
-  if (window._oddsCache) return window._oddsCache;
-  const byTeam = {};
+// Fetch the raw consensus games list once (cached for the session). NOT
+// keyed by team — a team plays many games across the season, so any
+// team-only key gets silently overwritten by whichever game loads last,
+// which was the root cause of showing a completely different week's line.
+async function fetchConsensusGames() {
+  if (window._oddsGamesCache) return window._oddsGamesCache;
+  let games = [];
   try {
     const res = await fetch("/.netlify/functions/get-odds");
     const data = await res.json();
-    if (data.ok && data.games) {
-      data.games.forEach(g => {
-        const homeAb = NAME_TO_ABBR[g.home], awayAb = NAME_TO_ABBR[g.away];
-        if (homeAb) byTeam[homeAb] = {
-          ml: g.mlHome, mlOther: g.mlAway, spread: g.spreadHome, oppAbbr: awayAb, books: g.books,
-          openingMl: g.openingMlHome, openingSpread: g.openingSpreadHome, openingAt: g.openingCapturedAt,
-        };
-        if (awayAb) byTeam[awayAb] = {
-          ml: g.mlAway, mlOther: g.mlHome, spread: g.spreadAway, oppAbbr: homeAb, books: g.books,
-          openingMl: g.openingMlAway, openingSpread: g.openingSpreadAway, openingAt: g.openingCapturedAt,
-        };
-      });
-    }
-  } catch (e) { /* function may be unconfigured; fall back to ESPN lines */ }
-  window._oddsCache = byTeam;
-  return byTeam;
+    if (data.ok && data.games) games = data.games;
+  } catch (e) { /* function may be unconfigured; caller falls back to ESPN lines */ }
+  window._oddsGamesCache = games;
+  return games;
 }
 
+// Find the ONE consensus game matching a specific ESPN matchup — by team
+// names AND closest kickoff time. Matching on team names alone silently
+// grabs whichever game for that team appears last in the season-wide list
+// (a different week entirely), which is what produced wildly wrong spreads.
+function matchConsensusGame(games, homeName, awayName, kickoffMs) {
+  let best = null, bestDelta = Infinity;
+  games.forEach(g => {
+    if (g.home !== homeName || g.away !== awayName) return;
+    const gKick = g.commence ? new Date(g.commence).getTime() : null;
+    const delta = (gKick != null && kickoffMs != null) ? Math.abs(gKick - kickoffMs) : 0;
+    if (delta < bestDelta) { bestDelta = delta; best = g; }
+  });
+  // only trust a match within ~36h of ESPN's kickoff — games can get flexed
+  // slightly, but a match a week+ away means it's genuinely a different game
+  return (best && bestDelta <= 36 * 3600 * 1000) ? best : null;
+}
 
 // Pure scoring computation — no DOM. Returns the array of team score objects.
 // Shared by loadMatchups() (renders the Best Losers panel) and Only Losses
@@ -3865,7 +3873,7 @@ async function fetchConsensusOdds() {
 // where the Best Losers panel isn't even on screen).
 async function computeBestLoserScores(week) {
   // consensus multi-book odds (from our Netlify function) — sharper than ESPN's single line
-  const consensus = await fetchConsensusOdds();
+  const oddsGames = await fetchConsensusGames();
   // power ratings (point differential) + rest days — Tier 2 additions
   const [powerRatings, lastGameDate] = await Promise.all([
     fetchPowerRatings(week),
@@ -3887,6 +3895,20 @@ async function computeBestLoserScores(week) {
     const home = cs.find(c => c.homeAway === "home");
     const away = cs.find(c => c.homeAway === "away");
     if (!home || !away) return;
+
+    // find the ONE consensus game matching THIS specific ESPN matchup (teams + kickoff)
+    const evKickoffMs = ev.date ? new Date(ev.date).getTime() : null;
+    const homeFullName = TEAM_NAME[espnAbbr(home.team?.abbreviation)];
+    const awayFullName = TEAM_NAME[espnAbbr(away.team?.abbreviation)];
+    const matched = matchConsensusGame(oddsGames, homeFullName, awayFullName, evKickoffMs);
+    const conHome = matched ? {
+      ml: matched.mlHome, mlOther: matched.mlAway, spread: matched.spreadHome, books: matched.books,
+      openingSpread: matched.openingSpreadHome,
+    } : null;
+    const conAway = matched ? {
+      ml: matched.mlAway, mlOther: matched.mlHome, spread: matched.spreadAway, books: matched.books,
+      openingSpread: matched.openingSpreadAway,
+    } : null;
 
     const odds = comp.odds?.[0];
       // spread details like "KC -6.5" → favorite abbr + number
@@ -3917,9 +3939,9 @@ async function computeBestLoserScores(week) {
       // moneylines if present
       const homeML = odds?.homeTeamOdds?.moneyLine, awayML = odds?.awayTeamOdds?.moneyLine;
 
-      [[home, away, "home", homeML, awayWinPct, homeWinPct],
-       [away, home, "away", awayML, homeWinPct, awayWinPct]].forEach(
-        ([t, opp, side, ml, oppWinPct, myWinPct]) => {
+      [[home, away, "home", homeML, awayWinPct, homeWinPct, conHome],
+       [away, home, "away", awayML, homeWinPct, awayWinPct, conAway]].forEach(
+        ([t, opp, side, ml, oppWinPct, myWinPct, con]) => {
           const ab = espnAbbr(t.team?.abbreviation);
           if (!ab) return;
           // team spread from its own perspective: + = underdog (expected to lose)
@@ -3927,7 +3949,7 @@ async function computeBestLoserScores(week) {
           if (spreadMag != null && favAbbr) teamSpread = (ab === favAbbr) ? -spreadMag : spreadMag;
 
           const steps = [];   // human-readable breakdown of the score
-          const con = consensus[ab];       // consensus odds for this team, if available
+          // (con is now the matched consensus for THIS specific game — see matchConsensusGame above)
           let lossProb, primary;
           const MAX_PLAUSIBLE_SPREAD = 30;   // no real NFL spread has ever exceeded ~27
           const consensusSpreadOk = con && con.spread != null && Math.abs(con.spread) <= MAX_PLAUSIBLE_SPREAD;
