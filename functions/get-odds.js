@@ -93,8 +93,16 @@ exports.handler = async () => {
 
     const games = (data || []).map(g => {
       const home = g.home_team, away = g.away_team;
-      // collect every book's moneyline + spread for each side
-      const mlHome = [], mlAway = [], spHome = [], spAway = [];
+      // collect every book's moneyline for each side (independently — these are
+      // NOT required to mirror each other, different vig per side is normal)
+      const mlHome = [], mlAway = [];
+      // For the SPREAD, only track the home team's point per book — the away
+      // side is mathematically always its exact negation for that same book,
+      // so deriving it that way (rather than medianing the two sides
+      // independently) guarantees the two numbers can never drift apart or
+      // land on the same sign, which is what happens if inconsistent book
+      // coverage lets the two medians be computed from different books.
+      const spHomePts = [];
       (g.bookmakers || []).forEach(bk => {
         (bk.markets || []).forEach(mk => {
           if (mk.key === "h2h") {
@@ -103,18 +111,18 @@ exports.handler = async () => {
               else if (o.name === away) mlAway.push(o.price);
             });
           } else if (mk.key === "spreads") {
-            mk.outcomes.forEach(o => {
-              if (o.name === home) spHome.push(o.point);
-              else if (o.name === away) spAway.push(o.point);
-            });
+            const homeOutcome = mk.outcomes.find(o => o.name === home);
+            if (homeOutcome && homeOutcome.point != null) spHomePts.push(homeOutcome.point);
           }
         });
       });
+      const spreadHome = median(spHomePts);
+      const spreadAway = spreadHome == null ? null : -spreadHome;   // exact mirror, always
       return {
         home, away,
         commence: g.commence_time,
         mlHome: median(mlHome), mlAway: median(mlAway),   // consensus moneylines
-        spreadHome: median(spHome), spreadAway: median(spAway), // consensus spreads
+        spreadHome, spreadAway,                             // guaranteed-symmetric consensus spreads
         books: (g.bookmakers || []).length,
         game_key: gameKey(home, away, g.commence_time),
       };
