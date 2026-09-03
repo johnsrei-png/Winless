@@ -1661,9 +1661,10 @@ async function renderBoard(wk, headerHtml) {
         <div class="ol-reveal">
           <div class="ol-head">🤖 <b>Only Losses</b> picked this week</div>
           <div class="ol-chips">${chips}</div>
-          <p class="ol-note">If Only Losses beats all three of you outright on correct picks this week,
-            everyone owes $5 to the season pot. A tie or any one of you matching or beating it means nobody pays.
-            Result shows on Standings once the week's graded.</p>
+          <p class="ol-note">Picks are weighted toward higher Best Loser scores — not guaranteed — and get
+            sharper over the season as real results calibrate the model. If Only Losses beats all three of you
+            outright on correct picks this week, everyone owes $5 to the season pot. A tie or any one of you
+            matching or beating it means nobody pays. Result shows on Standings once the week's graded.</p>
         </div>`;
     }
   } catch (e) { /* Only Losses is a bonus mechanic; board still works without it */ }
@@ -2221,11 +2222,12 @@ function weightedPickTeams(teams, count) {
   const pool = teams.slice();
   const picked = [];
   while (picked.length < count && pool.length) {
-    const totalWeight = pool.reduce((s, t) => s + Math.max(0.5, t.score), 0);
+    const weightOf = (t) => Math.max(0.5, t.calibratedWeight != null ? t.calibratedWeight : t.score);
+    const totalWeight = pool.reduce((s, t) => s + weightOf(t), 0);
     let r = Math.random() * totalWeight;
     let idx = 0;
     for (; idx < pool.length; idx++) {
-      r -= Math.max(0.5, pool[idx].score);
+      r -= weightOf(pool[idx]);
       if (r <= 0) break;
     }
     const chosen = pool[Math.min(idx, pool.length - 1)];
@@ -2238,6 +2240,31 @@ function weightedPickTeams(teams, count) {
   return picked;
 }
 
+// ------------------------------------------------------------
+// Calibration feedback loop: rather than trust a raw Best Loser score at
+// face value, check whether that score RANGE has actually been reliable
+// this season (using the same bucketed accuracy data shown on Standings)
+// and nudge toward the real observed rate. Blends in gradually with sample
+// size — same shrinkage pattern as the power ratings — so with little data
+// early in a season this is a no-op, and it gets sharper as real results
+// accumulate. This is what makes Only Losses' picking genuinely improve
+// over the season instead of just being differently random on day one.
+// ------------------------------------------------------------
+const CALIBRATION_MIN_SAMPLE = 5;    // below this, don't trust the bucket at all
+const CALIBRATION_FULL_TRUST = 15;   // at/above this, fully trust the observed rate
+const CALIBRATION_MAX_CORRECTION = 1.5;  // clamp how hard a correction can swing (±50%)
+
+function calibrateScore(rawScore, buckets) {
+  if (!buckets || !buckets.length) return rawScore;
+  const lo = Math.min(90, Math.floor(rawScore / 10) * 10);
+  const bucket = buckets.find(b => b.range === `${lo}-${lo + 9}`);
+  if (!bucket || bucket.count < CALIBRATION_MIN_SAMPLE || bucket.avgPredicted <= 0) return rawScore;
+  const ratio = Math.max(1 / CALIBRATION_MAX_CORRECTION, Math.min(CALIBRATION_MAX_CORRECTION, bucket.actualLossPct / bucket.avgPredicted));
+  const corrected = Math.max(2, Math.min(98, rawScore * ratio));
+  const trust = Math.min(1, bucket.count / CALIBRATION_FULL_TRUST);   // 0..1, more sample = more trust
+  return rawScore * (1 - trust) + corrected * trust;
+}
+
 // Generate (once) and store Only Losses' picks for a week, at lock time —
 // using live scores + the same team-eligibility rules the players have.
 async function ensureOnlyLossesPicks(wk) {
@@ -2245,12 +2272,14 @@ async function ensureOnlyLossesPicks(wk) {
     const existing = await sbGet(`only_losses_picks?week_number=eq.${wk.week_number}`);
     if (existing && existing.length) return existing;   // already generated for this week
 
-    const [teams, entries, allAssigns] = await Promise.all([
+    const [teams, entries, allAssigns, accResolved] = await Promise.all([
       computeBestLoserScores(wk.week_number).catch(() => []),
       sbGet(`entries?order=id.asc`).catch(() => []),
       sbGet(`assignments?order=week_number.asc`).catch(() => []),
+      computeAccuracy().catch(() => []),   // this season's real predicted-vs-actual data
     ]);
     if (!teams.length) return [];
+    const calibBuckets = bucketAccuracy(accResolved);
 
     // same eligibility as the human pick screen: a team dead once every
     // ALIVE entry has already used it can't be picked
@@ -2261,7 +2290,7 @@ async function ensureOnlyLossesPicks(wk) {
       if (!liveEntryIds.length) return true;
       const used = usedByAll[t.ab] || new Set();
       return !liveEntryIds.every(id => used.has(id));
-    });
+    }).map(t => ({ ...t, calibratedWeight: calibrateScore(t.score, calibBuckets) }));
 
     const picked = weightedPickTeams(eligibleTeams, wk.picks_required);
     if (!picked.length) return [];
