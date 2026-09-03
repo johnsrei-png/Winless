@@ -831,6 +831,21 @@
   .acc-good { color: var(--live); }
   .acc-ok { color: var(--gold); }
   .acc-off { color: var(--alert); }
+
+  /* ---- Only Losses reveal ---- */
+  .ol-reveal {
+    background: linear-gradient(160deg, rgba(245,196,81,0.10), rgba(245,196,81,0.02));
+    border: 1px solid var(--line); border-left: 3px solid var(--gold);
+    border-radius: 14px; padding: 16px 18px; margin-bottom: 16px;
+  }
+  .ol-head { font-family: 'Barlow Semi Condensed', sans-serif; font-weight: 700; font-size: 15px; margin-bottom: 10px; }
+  .ol-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+  .ol-chip {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+    padding: 6px 10px; font-size: 13px; color: var(--ink);
+  }
+  .ol-chip b { color: var(--gold); font-family: 'Barlow Semi Condensed', sans-serif; }
+  .ol-note { font-size: 12px; color: var(--ink-faint); line-height: 1.5; margin: 0; }
   .um-legend { margin-bottom: 14px; }
   .um-cell { cursor: pointer; }
   .um-cell:hover { outline: 1px solid var(--gold); outline-offset: -1px; }
@@ -1609,6 +1624,27 @@ async function renderBoard(wk, headerHtml) {
       ${rankRows}
     </div>`;
 
+  // ===== Only Losses reveal =====
+  // Generates (once, lazily) the first time anyone views the locked board,
+  // using live scores at that moment — then reveals immediately since your
+  // picks are already locked by this point.
+  let olHtml = "";
+  try {
+    const olPicks = await ensureOnlyLossesPicks(wk);
+    if (olPicks && olPicks.length) {
+      const chips = olPicks.slice().sort((a, b) => b.score - a.score)
+        .map(p => `<span class="ol-chip">${TEAM_NAME[p.team_abbr] || p.team_abbr} <b>${p.score}</b></span>`).join("");
+      olHtml = `
+        <div class="ol-reveal">
+          <div class="ol-head">🤖 <b>Only Losses</b> picked this week</div>
+          <div class="ol-chips">${chips}</div>
+          <p class="ol-note">If Only Losses beats all three of you outright on correct picks this week,
+            everyone owes $5 to the season pot. A tie or any one of you matching or beating it means nobody pays.
+            Result shows on Standings once the week's graded.</p>
+        </div>`;
+    }
+  } catch (e) { /* Only Losses is a bonus mechanic; board still works without it */ }
+
   // team dropdown options for an entry — disable teams this entry already used
   // ===== Two views: clean summary (default) or full edit board =====
   if (!BOARD_EDIT_MODE) {
@@ -1645,6 +1681,7 @@ async function renderBoard(wk, headerHtml) {
           <button class="btn btn-lock" id="editboard">Edit board</button>
         </div>
       </div>
+      ${olHtml}
       <div class="placed-grid">${cards}</div>`;
 
     document.getElementById("editboard").onclick = () => { BOARD_EDIT_MODE = true; renderWeek(); };
@@ -1704,6 +1741,7 @@ async function renderBoard(wk, headerHtml) {
         <button class="btn btn-lock" id="doneedit">Done</button>
       </div>
     </div>
+    ${olHtml}
     <div class="reveal-grid">
       <div>
         <div class="section-title">Entry Board</div>
@@ -2087,7 +2125,14 @@ async function computePot() {
     return { player_id: p.player_id, amount: amt };
   });
 
-  const allContribs = [...potFromPenalty, ...penaltyContribs];
+  // Only Losses sweep contributions — $5/player recorded in pot_ledger with a
+  // dedicated reason so they can't collide with the tile-derived contributions
+  // above (which are computed fresh from peels each time, not read from pot_ledger).
+  const sweepContribs = (potLedger || [])
+    .filter(r => r.reason === "only_losses_sweep")
+    .map(r => ({ player_id: r.player_id, amount: Number(r.amount) }));
+
+  const allContribs = [...potFromPenalty, ...penaltyContribs, ...sweepContribs];
   const potTotal = allContribs.reduce((s,c)=> s + c.amount, 0);
   const paidBy = {}; PLAYERS.forEach(p => paidBy[p.id] = 0);
   allContribs.forEach(c => { if (paidBy[c.player_id] != null) paidBy[c.player_id] += c.amount; });
@@ -2141,10 +2186,126 @@ async function renderPotStrip() {
 //  STANDINGS TAB — how accurate each of us has been
 // ============================================================
 // ============================================================
-//  Model accuracy tracker — checks Best Loser scores against what
-//  actually happened, so the model's confidence can be validated
-//  against real outcomes instead of trusted on theory alone.
+//  ONLY LOSSES — a hidden "house" opponent that picks alongside you each
+//  week (same team-count, same eligible pool) and reveals only once the
+//  week is locked. If it beats every one of the three of you outright on
+//  correct picks, all three of you owe $5 into the season pot.
 // ============================================================
+
+// Weighted-random pick without replacement, using Best Loser scores as
+// weights (higher score = more likely, not guaranteed) — gives it real
+// texture rather than robotically reading the top of the leaderboard.
+// Never takes both teams from the same game, since only one can lose.
+function weightedPickTeams(teams, count) {
+  const pool = teams.slice();
+  const picked = [];
+  while (picked.length < count && pool.length) {
+    const totalWeight = pool.reduce((s, t) => s + Math.max(0.5, t.score), 0);
+    let r = Math.random() * totalWeight;
+    let idx = 0;
+    for (; idx < pool.length; idx++) {
+      r -= Math.max(0.5, pool[idx].score);
+      if (r <= 0) break;
+    }
+    const chosen = pool[Math.min(idx, pool.length - 1)];
+    picked.push(chosen);
+    // remove the chosen team AND its opponent (no same-game double-picks)
+    for (let i = pool.length - 1; i >= 0; i--) {
+      if (pool[i].ab === chosen.ab || pool[i].ab === chosen.oppAb) pool.splice(i, 1);
+    }
+  }
+  return picked;
+}
+
+// Generate (once) and store Only Losses' picks for a week, at lock time —
+// using live scores + the same team-eligibility rules the players have.
+async function ensureOnlyLossesPicks(wk) {
+  try {
+    const existing = await sbGet(`only_losses_picks?week_number=eq.${wk.week_number}`);
+    if (existing && existing.length) return existing;   // already generated for this week
+
+    const [teams, entries, allAssigns] = await Promise.all([
+      computeBestLoserScores(wk.week_number).catch(() => []),
+      sbGet(`entries?order=id.asc`).catch(() => []),
+      sbGet(`assignments?order=week_number.asc`).catch(() => []),
+    ]);
+    if (!teams.length) return [];
+
+    // same eligibility as the human pick screen: a team dead once every
+    // ALIVE entry has already used it can't be picked
+    const liveEntryIds = (entries || []).filter(e => e.status !== "dead").map(e => e.id);
+    const usedByAll = {};
+    (allAssigns || []).forEach(a => { (usedByAll[a.team] ||= new Set()).add(a.entry_id); });
+    const eligibleTeams = teams.filter(t => {
+      if (!liveEntryIds.length) return true;
+      const used = usedByAll[t.ab] || new Set();
+      return !liveEntryIds.every(id => used.has(id));
+    });
+
+    const picked = weightedPickTeams(eligibleTeams, wk.picks_required);
+    if (!picked.length) return [];
+
+    const rows = picked.map(t => ({ week_number: wk.week_number, team_abbr: t.ab, score: t.score }));
+    await sbUpsert("only_losses_picks", rows, "week_number,team_abbr");
+    return rows;
+  } catch (e) {
+    return [];   // Only Losses is a bonus mechanic; never block the board on it
+  }
+}
+
+// Resolve any weeks where Only Losses' picks (and everyone's own picks) are
+// fully graded, record the result, and — on a sweep — add $5/player to the pot.
+async function computeOnlyLosses() {
+  let results = [];
+  try {
+    results = await sbGet(`only_losses_results?order=week_number.asc`) || [];
+    const resolvedWeeks = new Set(results.map(r => r.week_number));
+
+    const allPicks = await sbGet(`only_losses_picks?order=week_number.asc`) || [];
+    const weeksWithPicks = [...new Set(allPicks.map(p => p.week_number))];
+    const pendingWeeks = weeksWithPicks.filter(w => !resolvedWeeks.has(w));
+
+    for (const wk of pendingWeeks) {
+      const myPicks = allPicks.filter(p => p.week_number === wk);
+      const weekPicks = await sbGet(`picks?week_number=eq.${wk}`);
+      if (!weekPicks || !weekPicks.length) continue;
+      // only resolve once every player's pick for the week is graded (not pending)
+      if (weekPicks.some(p => !p.result || p.result === "pending")) continue;
+
+      const outcomes = await fetchWeekOutcomes(wk);
+      // require an outcome for every OL pick before resolving this week
+      if (myPicks.some(p => !outcomes[p.team_abbr])) continue;
+
+      const olCorrect = myPicks.filter(p => outcomes[p.team_abbr] === "lost").length;
+      const playerCorrect = {};
+      PLAYERS.forEach(p => playerCorrect[p.id] = 0);
+      weekPicks.forEach(p => { if (p.result === "correct" && playerCorrect[p.player_id] != null) playerCorrect[p.player_id]++; });
+
+      const swept = PLAYERS.every(p => olCorrect > (playerCorrect[p.id] || 0));
+
+      try {
+        await sb("only_losses_results", {
+          method: "POST",
+          body: JSON.stringify({
+            week_number: wk, ol_correct: olCorrect, player_correct: playerCorrect, swept,
+          }),
+        });
+        if (swept) {
+          await sb("pot_ledger", {
+            method: "POST",
+            body: JSON.stringify(PLAYERS.map(p => ({
+              player_id: p.id, amount: 5, week_number: wk, reason: "only_losses_sweep",
+            }))),
+          });
+        }
+        results.push({ week_number: wk, ol_correct: olCorrect, player_correct: playerCorrect, swept });
+      } catch (e) { /* try again next visit */ }
+    }
+  } catch (e) { /* Only Losses history is a bonus; standings still render without it */ }
+  return results.sort((a, b) => a.week_number - b.week_number);
+}
+
+
 
 // Pull final results for a week directly from ESPN and return team -> 'lost'|'won'|'tied'.
 // Only completed games are included; in-progress/future games are simply absent.
@@ -2393,10 +2554,15 @@ async function renderStandings() {
     return { player_id: p.player_id, amount: amt, week: p.week_number, reason: t === "negative" ? "penalty tile" : "pot tile" };
   });
 
+  const sweepContribs = (potLedger || [])
+    .filter(r => r.reason === "only_losses_sweep")
+    .map(r => ({ player_id: r.player_id, amount: Number(r.amount), week: r.week_number, reason: "Only Losses swept the week" }));
+
   // combine contributions
   const allContribs = [
     ...potFromPenalty.map(c => ({ ...c, reason: "worst record" })),
     ...potTileContribs,
+    ...sweepContribs,
   ];
   const potTotal = allContribs.reduce((s,c)=> s + c.amount, 0);
   const paidBy = {}; PLAYERS.forEach(p => paidBy[p.id] = 0);
@@ -2434,9 +2600,9 @@ async function renderStandings() {
           </div>`).join("")}
       </div>
       <p class="field-note">The pot fills $${WEEKLY_ANTE} each week from whoever had the <b>worst</b> record
-        (confidence, then latest submission, breaks ties), plus every 💀 penalty tile peeled. At season's end
-        the whole pot is <b>winner-take-all</b> to whoever won the <b>most weekly wins</b> — ties broken by
-        overall season record, then total confidence.</p>
+        (confidence, then latest submission, breaks ties), every 💀 penalty tile peeled, and $5/player any week
+        <b>🤖 Only Losses</b> sweeps all three of you. At season's end the whole pot is <b>winner-take-all</b> to
+        whoever won the <b>most weekly wins</b> — ties broken by overall season record, then total confidence.</p>
     </div>`;
 
   // per-player peel breakdown for the drill-down
@@ -2486,6 +2652,39 @@ async function renderStandings() {
       </div>
     </div>` : "";
 
+  // ===== Only Losses season history =====
+  let olSeasonHtml = "";
+  try {
+    const olResults = await computeOnlyLosses();
+    const sweepCount = olResults.filter(r => r.swept).length;
+    const nameOf2 = id => PLAYERS.find(p => p.id === id)?.name || id;
+    const rowsOl = olResults.slice().reverse().map(r => {
+      const perPlayer = PLAYERS.map(p => `${nameOf2(p.id)} ${r.player_correct?.[p.id] ?? "—"}`).join(" · ");
+      return `<div class="st-row" style="grid-template-columns:70px 1fr 90px">
+        <div class="st-name">Wk ${r.week_number}</div>
+        <div style="font-size:13px;color:var(--ink-dim)">🤖 ${r.ol_correct} correct — ${perPlayer}</div>
+        <div class="st-val ${r.swept ? "acc-off" : ""}">${r.swept ? "SWEPT 💀" : "safe"}</div>
+      </div>`;
+    }).join("");
+    olSeasonHtml = `
+      <div class="st-weekly">
+        <div class="st-section-title">🤖 Only Losses — season record</div>
+        ${olResults.length ? `
+          <div class="standings-table">
+            <div class="st-head" style="grid-template-columns:70px 1fr 90px">
+              <div>Week</div><div>Result</div><div>Outcome</div>
+            </div>
+            ${rowsOl}
+          </div>
+          <p class="field-note">Only Losses picks the same number of teams you do each week, from the same
+            eligible pool, revealed once the week locks. It beats you only if its correct count is strictly
+            higher than <b>all three</b> of you — a sweep costs each player $5 into the season pot.
+            ${sweepCount} sweep${sweepCount !== 1 ? "s" : ""} so far this season.</p>`
+          : `<p class="field-note" style="opacity:0.7">No weeks graded yet — Only Losses' picks reveal once a
+            week locks, and its record shows here once that week's games are final.</p>`}
+      </div>`;
+  } catch (e) { /* Only Losses history is a bonus; standings still render without it */ }
+
   // ===== Model accuracy tracker =====
   let accuracyHtml = "";
   try {
@@ -2520,6 +2719,32 @@ async function renderStandings() {
             <span class="acc-off">red</span> = off by more — worth revisiting that part of the model.
             ${totalN} team-weeks tracked so far this season.</p>
         </div>`;
+    } else {
+      // placeholder: nothing resolved yet, but explain what this section is and will show
+      const placeholderRows = ["0-9","10-19","20-29","30-39","40-49","50-59","60-69","70-79","80-89","90-99"]
+        .map(r => `<div class="st-row" style="grid-template-columns:1fr 100px 100px 90px">
+          <div class="st-name" style="color:var(--ink-faint)">${r}</div>
+          <div class="st-val" style="color:var(--ink-faint)">—</div>
+          <div class="st-val" style="color:var(--ink-faint)">—</div>
+          <div class="st-val" style="color:var(--ink-faint)">0</div>
+        </div>`).join("");
+      accuracyHtml = `
+        <div class="st-weekly">
+          <div class="st-section-title">Model Accuracy — predicted vs. actual</div>
+          <div class="standings-table" style="opacity:0.55">
+            <div class="st-head" style="grid-template-columns:1fr 100px 100px 90px">
+              <div>Score range</div><div>Predicted</div><div>Actually lost</div><div>Sample</div>
+            </div>
+            ${placeholderRows}
+          </div>
+          <p class="field-note">No results tracked yet — this fills in once a week's games are graded. Every team
+            that appears in Best Losers gets its score snapshotted; once that game finishes, this checks whether
+            the team actually lost and compares it to what the score predicted. <b>Predicted</b> will show the
+            average score in each range, <b>Actually lost</b> the real rate teams in that range lost — close
+            together means the model is well-calibrated. <span class="acc-good">Green</span> rows will mean within
+            10 points, <span class="acc-ok">amber</span> within 20, <span class="acc-off">red</span> further off
+            and worth revisiting. Check back after the first week of games wraps up.</p>
+        </div>`;
     }
   } catch (e) { /* accuracy tracker is a nicety; standings still render fine without it */ }
 
@@ -2546,6 +2771,7 @@ async function renderStandings() {
     </div>
     ${potHtml}
     ${ledgerHtml}
+    ${olSeasonHtml}
     ${accuracyHtml}`;
 
   // wire ledger drill-down toggles
@@ -2872,6 +3098,8 @@ async function commishTools(overlay) {
       // only clear THIS season's snapshots — the accuracy tracker is meant to
       // build model-calibration history across seasons, not just one season
       await sb(`score_snapshots?season=eq.${CURRENT_SEASON}`, { method: "DELETE" }).catch(() => {});
+      await sb(`only_losses_picks?id=gte.0`, { method: "DELETE" }).catch(() => {});
+      await sb(`only_losses_results?id=gte.0`, { method: "DELETE" }).catch(() => {});
       await sb(`weeks?id=gte.0`, { method: "DELETE" });
       await sb(`entries?id=gte.0`, {
         method: "PATCH", body: JSON.stringify({ status: "alive", died_week: null }),
@@ -3583,45 +3811,36 @@ async function fetchConsensusOdds() {
 }
 
 
-async function loadMatchups(week) {
-  const panel = document.getElementById("matchups");
-  if (!panel) return;
+// Pure scoring computation — no DOM. Returns the array of team score objects.
+// Shared by loadMatchups() (renders the Best Losers panel) and Only Losses
+// (needs the same scores to make its picks, from the locked board screen
+// where the Best Losers panel isn't even on screen).
+async function computeBestLoserScores(week) {
+  // consensus multi-book odds (from our Netlify function) — sharper than ESPN's single line
+  const consensus = await fetchConsensusOdds();
+  // power ratings (point differential) + rest days — Tier 2 additions
+  const [powerRatings, lastGameDate] = await Promise.all([
+    fetchPowerRatings(week),
+    fetchRestDays(week),
+  ]);
 
-  // Already built for this same week and still in the DOM? Leave it completely
-  // untouched — re-rendering would collapse any row the user has expanded to read
-  // the math, and the lines don't change minute-to-minute. Only rebuild on a real
-  // week change or first load.
-  if (window._blWeek === week && panel.querySelector(".matchup-list")) {
-    return;
-  }
+  const url = `https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard`
+            + `?seasontype=2&week=${week}&dates=${CURRENT_SEASON}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error("ESPN " + res.status);
+  const data = await res.json();
 
-  const body = panel.querySelector(".matchup-loading");
-  try {
-    // consensus multi-book odds (from our Netlify function) — sharper than ESPN's single line
-    const consensus = await fetchConsensusOdds();
-    // power ratings (point differential) + rest days — Tier 2 additions
-    const [powerRatings, lastGameDate] = await Promise.all([
-      fetchPowerRatings(week),
-      fetchRestDays(week),
-    ]);
+  // Build a per-TEAM row: each game yields two teams, each with a loser score.
+  const teams = [];
+  (data.events || []).forEach(ev => {
+    const comp = ev.competitions?.[0];
+    if (!comp) return;
+    const cs = comp.competitors || [];
+    const home = cs.find(c => c.homeAway === "home");
+    const away = cs.find(c => c.homeAway === "away");
+    if (!home || !away) return;
 
-    const url = `https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard`
-              + `?seasontype=2&week=${week}&dates=${CURRENT_SEASON}`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error("ESPN " + res.status);
-    const data = await res.json();
-
-    // Build a per-TEAM row: each game yields two teams, each with a loser score.
-    const teams = [];
-    (data.events || []).forEach(ev => {
-      const comp = ev.competitions?.[0];
-      if (!comp) return;
-      const cs = comp.competitors || [];
-      const home = cs.find(c => c.homeAway === "home");
-      const away = cs.find(c => c.homeAway === "away");
-      if (!home || !away) return;
-
-      const odds = comp.odds?.[0];
+    const odds = comp.odds?.[0];
       // spread details like "KC -6.5" → favorite abbr + number
       let favAbbr = null, spreadMag = null;
       if (odds?.details && odds.details !== "EVEN") {
@@ -3794,6 +4013,25 @@ async function loadMatchups(week) {
           });
         });
     });
+
+  return teams;
+}
+
+async function loadMatchups(week) {
+  const panel = document.getElementById("matchups");
+  if (!panel) return;
+
+  // Already built for this same week and still in the DOM? Leave it completely
+  // untouched — re-rendering would collapse any row the user has expanded to read
+  // the math, and the lines don't change minute-to-minute. Only rebuild on a real
+  // week change or first load.
+  if (window._blWeek === week && panel.querySelector(".matchup-list")) {
+    return;
+  }
+
+  const body = panel.querySelector(".matchup-loading");
+  try {
+    const teams = await computeBestLoserScores(week);
 
     if (!teams.length) {
       body.outerHTML = `<div class="matchup-empty">No matchups posted yet for Week ${week}.</div>`;
