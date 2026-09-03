@@ -846,6 +846,8 @@
   }
   .ol-chip b { color: var(--gold); font-family: 'Barlow Semi Condensed', sans-serif; }
   .ol-note { font-size: 12px; color: var(--ink-faint); line-height: 1.5; margin: 0; }
+  .st-row-bot { border-left: 2px solid var(--gold); }
+  .st-row-bot .st-name { font-style: italic; }
   .um-legend { margin-bottom: 14px; }
   .um-cell { cursor: pointer; }
   .um-cell:hover { outline: 1px solid var(--gold); outline-offset: -1px; }
@@ -2378,6 +2380,37 @@ function bucketAccuracy(resolved) {
   }));
 }
 
+// Season-long tally for Only Losses, in the same shape as a player's tally,
+// so it can be dropped straight into the main leaderboard. Confidence is
+// derived the same way a player's would be — rank picks by score within
+// each week (highest score = most "confident"), same points formula.
+async function computeOnlyLossesTally(reqByWeek) {
+  const tally = { correct: 0, incorrect: 0, pending: 0, conf: 0 };
+  const weekly = {};
+  try {
+    const allPicks = await sbGet(`only_losses_picks?order=week_number.asc`) || [];
+    const byWeek = {};
+    allPicks.forEach(p => { (byWeek[p.week_number] ||= []).push(p); });
+    for (const wkStr of Object.keys(byWeek)) {
+      const wk = Number(wkStr);
+      const picksThisWeek = byWeek[wk].slice().sort((a, b) => b.score - a.score);
+      const req = reqByWeek[wk] || picksThisWeek.length || 8;
+      const outcomes = await fetchWeekOutcomes(wk);
+      const wkTally = { correct: 0, incorrect: 0, conf: 0 };
+      picksThisWeek.forEach((p, idx) => {
+        const rank = idx + 1;
+        const pts = req - rank + 1;
+        const outcome = outcomes[p.team_abbr];
+        if (outcome === "lost") { tally.correct++; tally.conf += pts; wkTally.correct++; wkTally.conf += pts; }
+        else if (outcome === "won" || outcome === "tied") { tally.incorrect++; wkTally.incorrect++; }
+        else { tally.pending++; }
+      });
+      weekly[wk] = wkTally;
+    }
+  } catch (e) { /* Only Losses is a bonus mechanic; leaderboard still works without it */ }
+  return { tally, weekly };
+}
+
 async function renderStandings() {
   renderWhoami();
 
@@ -2411,25 +2444,40 @@ async function renderStandings() {
     else t.pending++;
   });
 
+  // fold Only Losses into the same leaderboard — sorted in with everyone else,
+  // so it's immediately visible whether the algorithm is beating the humans.
+  const olTallyData = await computeOnlyLossesTally(reqByWeek);
+  weekly["only_losses"] = olTallyData.weekly;
+  const olEntry = {
+    id: "only_losses", name: "🤖 Only Losses", ...olTallyData.tally,
+    total: olTallyData.tally.correct + olTallyData.tally.incorrect,
+    pct: (olTallyData.tally.correct + olTallyData.tally.incorrect)
+       ? olTallyData.tally.correct / (olTallyData.tally.correct + olTallyData.tally.incorrect) : 0,
+    isBot: true,
+  };
+
   // rank: most correct, then highest confidence (the pool's tiebreaker)
-  const ranked = PLAYERS.map(p => ({
+  const ranked = [...PLAYERS.map(p => ({
     id: p.id, name: p.name, ...tally[p.id],
     total: tally[p.id].correct + tally[p.id].incorrect,
     pct: (tally[p.id].correct + tally[p.id].incorrect)
        ? tally[p.id].correct / (tally[p.id].correct + tally[p.id].incorrect) : 0,
-  })).sort((a,b) => b.correct - a.correct || b.conf - a.conf);
+  })), olEntry].sort((a,b) => b.correct - a.correct || b.conf - a.conf);
 
   const rows = ranked.map((r, i) => `
-    <div class="st-row ${i===0 ? "leader" : ""}">
+    <div class="st-row ${i===0 ? "leader" : ""} ${r.isBot ? "st-row-bot" : ""}">
       <div class="st-rank">${i+1}</div>
-      <div class="st-name">${r.name}${i===0 ? "<small>seeing the ball best</small>" : ""}</div>
+      <div class="st-name">${r.name}${i===0 ? `<small>${r.isBot ? "the algorithm is seeing the ball best" : "seeing the ball best"}</small>` : ""}</div>
       <div class="st-val">${r.correct}<small>-${r.incorrect}</small></div>
       <div class="st-val st-pct">${(r.pct*100).toFixed(0)}<small>%</small></div>
       <div class="st-val">${r.conf}</div>
     </div>`).join("");
 
   // weekly breakdown grid
-  const playedWeeks = [...new Set(picks.map(p => p.week_number))].sort((a,b)=>a-b);
+  const playedWeeks = [...new Set([
+    ...picks.map(p => p.week_number),
+    ...Object.keys(olTallyData.weekly).map(Number),
+  ])].sort((a,b)=>a-b);
   const gridHead = `<tr><th class="name">Week</th>${ranked.map(r=>`<th>${r.name}</th>`).join("")}</tr>`;
   const gridBody = playedWeeks.map(wk => {
     // determine this week's winner: most correct → confidence → earliest submission
@@ -3904,18 +3952,19 @@ async function computeBestLoserScores(week) {
             steps.push({ label: "No line posted", val: "50% base" });
           }
 
-          // If moneyline was primary, blend the spread in lightly as a cross-check (¼ weight).
           // Prefer the SAME consensus source's spread (con.spread) over ESPN's independently
           // fetched line — mixing two different sources for the moneyline vs. the spread can
-          // produce internally-contradicting cards (a big favorite by spread, near-even by ML)
-          // when the two feeds disagree or briefly mismatch.
-          const crossCheckSpread = (con && con.spread != null) ? con.spread : teamSpread;
+          // produce internally-contradicting cards (a big favorite by one number, near-even by
+          // another) when the two feeds disagree or briefly mismatch. Reassigning teamSpread
+          // itself (not just a local variable) means every downstream use — the header tag,
+          // the cross-check step, anywhere else — reads the same consistent number.
           const crossCheckIsConsensus = con && con.spread != null;
-          if (primary === "ml" && crossCheckSpread != null) {
-            const sp = spreadToLossProb(crossCheckSpread);
+          if (crossCheckIsConsensus) teamSpread = con.spread;
+          if (primary === "ml" && teamSpread != null) {
+            const sp = spreadToLossProb(teamSpread);
             lossProb = lossProb * 0.75 + sp * 0.25;
             const srcNote = crossCheckIsConsensus ? "" : " (ESPN, no consensus spread)";
-            steps.push({ label: `Spread cross-check ${crossCheckSpread > 0 ? "+" + crossCheckSpread : crossCheckSpread}${srcNote}`, val: `→ ${Math.round(lossProb*100)}%` });
+            steps.push({ label: `Spread cross-check ${teamSpread > 0 ? "+" + teamSpread : teamSpread}${srcNote}`, val: `→ ${Math.round(lossProb*100)}%` });
           }
 
           // LINE MOVEMENT: informational only (not folded into the score yet — we're
