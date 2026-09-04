@@ -854,19 +854,20 @@
   }
 
   /* ---- Sandbox: drag-to-pick prototype ---- */
-  .dnd-slots { display: flex; flex-wrap: wrap; gap: 8px; }
+  .dnd-layout { display: grid; grid-template-columns: 1fr 300px; gap: 20px; align-items: start; }
+  @media (max-width: 760px) { .dnd-layout { grid-template-columns: 1fr; } }
+  .dnd-pool-col { position: sticky; top: 16px; }
+  .dnd-slots { display: flex; flex-direction: column; gap: 8px; }
   .dnd-slot {
-    display: flex; flex-direction: column; gap: 6px; background: var(--panel);
-    border: 1px solid var(--line); border-radius: 10px; padding: 10px; min-height: 90px;
-    width: 168px; flex-shrink: 0;
+    display: flex; align-items: center; gap: 12px; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; min-height: 58px;
   }
   .dnd-slot-rank {
-    display: flex; align-items: baseline; gap: 6px;
-    font-family: 'Barlow Semi Condensed', sans-serif; font-weight: 700; font-size: 17px;
-    color: var(--alert); line-height: 1.1;
+    font-family: 'Barlow Semi Condensed', sans-serif; font-weight: 700; font-size: 20px;
+    color: var(--alert); width: 34px; text-align: center; flex-shrink: 0; line-height: 1.1;
   }
   .dnd-slot-pts {
-    display: inline; font-size: 9px; color: var(--ink-faint); font-weight: 400; letter-spacing: 0.06em;
+    display: block; font-size: 9px; color: var(--ink-faint); font-weight: 400; letter-spacing: 0.06em;
   }
   .dnd-slot-body { flex: 1; min-width: 0; }
   .dnd-slot-empty {
@@ -874,8 +875,9 @@
     border: 1px dashed var(--line); border-radius: 8px;
   }
   .dnd-pool {
-    display: flex; flex-wrap: wrap; gap: 8px; background: var(--panel-2);
-    border: 1px solid var(--line); border-radius: 10px; padding: 12px; min-height: 70px;
+    display: flex; flex-direction: column; gap: 6px; background: var(--panel-2);
+    border: 1px solid var(--line); border-radius: 10px; padding: 10px;
+    max-height: 74vh; overflow-y: auto;
   }
   .dnd-tile {
     display: flex; align-items: center; gap: 10px; background: var(--panel);
@@ -883,7 +885,7 @@
     cursor: grab; touch-action: none; -webkit-tap-highlight-color: transparent;
     width: 168px; flex-shrink: 0;
   }
-  .dnd-tile.placed { width: 100%; }
+  .dnd-tile.placed, .dnd-tile.full { width: 100%; }
   .dnd-tile.dragging {
     cursor: grabbing; z-index: 20; box-shadow: 0 10px 24px rgba(0,0,0,0.5); border-color: var(--gold);
   }
@@ -4868,14 +4870,21 @@ function renderDragPickPrototype(wk, teams) {
       </div>`;
     }).join("");
 
-    const poolHtml = pool.map(t => tileHtml(t)).join("");
+    const poolHtml = pool.map(t => tileHtml(t, "full")).join("");
 
     const box = document.getElementById("dndbox");
     if (!box) return;
     box.innerHTML = `
-      <div class="dnd-slots" id="dndslots">${slotsHtml}</div>
-      <div class="section-title" style="margin-top:24px">Available teams — drag into a slot</div>
-      <div class="dnd-pool" id="dndpool">${poolHtml}</div>`;
+      <div class="dnd-layout">
+        <div>
+          <div class="section-title">Your picks</div>
+          <div class="dnd-slots" id="dndslots">${slotsHtml}</div>
+        </div>
+        <div class="dnd-pool-col">
+          <div class="section-title">Available teams</div>
+          <div class="dnd-pool" id="dndpool">${poolHtml}</div>
+        </div>
+      </div>`;
     wireDrag();
   }
 
