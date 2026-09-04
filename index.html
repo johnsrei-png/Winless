@@ -854,7 +854,7 @@
   }
 
   /* ---- Sandbox: drag-to-pick prototype ---- */
-  .dnd-layout { display: grid; grid-template-columns: 1fr 300px; gap: 20px; align-items: start; }
+  .dnd-layout { display: grid; grid-template-columns: 1fr 340px; gap: 20px; align-items: start; }
   @media (max-width: 760px) { .dnd-layout { grid-template-columns: 1fr; } }
   .dnd-pool-col { position: sticky; top: 16px; }
   .dnd-slots { display: flex; flex-direction: column; gap: 8px; }
@@ -879,6 +879,7 @@
     border: 1px solid var(--line); border-radius: 10px; padding: 10px;
     max-height: 74vh; overflow-y: auto;
   }
+  .dnd-pool-grid { flex-direction: row; flex-wrap: wrap; gap: 8px; }
   .dnd-tile {
     display: flex; align-items: center; gap: 10px; background: var(--panel);
     border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px;
@@ -886,6 +887,14 @@
     width: 168px; flex-shrink: 0;
   }
   .dnd-tile.placed, .dnd-tile.full { width: 100%; }
+  .dnd-tile.compact {
+    flex-direction: column; align-items: center; text-align: center;
+    width: 88px; gap: 3px; padding: 8px 6px;
+  }
+  .dnd-tile.compact .dnd-score { width: auto; font-size: 19px; }
+  .dnd-tile.compact .dnd-name {
+    font-size: 11px; white-space: normal; overflow: visible; text-overflow: clip; line-height: 1.2;
+  }
   .dnd-tile.dragging {
     cursor: grabbing; z-index: 20; box-shadow: 0 10px 24px rgba(0,0,0,0.5); border-color: var(--gold);
   }
@@ -4850,13 +4859,19 @@ function renderDragPickPrototype(wk, teams) {
   let pool = teams.slice().sort((a, b) => b.score - a.score);
 
   const scoreColor = (s) => s >= 65 ? "var(--live)" : s >= 50 ? "var(--gold)" : "var(--ink-faint)";
+  const spreadTxt = (t) => t.teamSpread == null ? "—"
+    : t.teamSpread > 0 ? `+${t.teamSpread} dog` : t.teamSpread < 0 ? `${t.teamSpread} fav` : "PK";
 
+  // slot tiles keep the matchup subtext (useful once placed); pool tiles are
+  // deliberately compact — just score + name — since the full detail now
+  // lives in the stats table below instead of being repeated on every tile.
   function tileHtml(t, extra = "") {
+    const compact = extra.includes("compact");
     return `<div class="dnd-tile ${extra}" data-ab="${t.ab}">
       <div class="dnd-score" style="color:${scoreColor(t.score)}">${t.score}</div>
       <div class="dnd-teaminfo">
         <div class="dnd-name">${t.name}</div>
-        <div class="dnd-meta">${t.side === "away" ? "@" : "vs"} ${t.oppName}</div>
+        ${compact ? "" : `<div class="dnd-meta">${t.side === "away" ? "@" : "vs"} ${t.oppName}</div>`}
       </div>
     </div>`;
   }
@@ -4870,7 +4885,18 @@ function renderDragPickPrototype(wk, teams) {
       </div>`;
     }).join("");
 
-    const poolHtml = pool.map(t => tileHtml(t, "full")).join("");
+    const poolHtml = pool.map(t => tileHtml(t, "compact")).join("");
+
+    // full stats table — every team, sorted by score, with the detail the
+    // compact tiles above deliberately leave out
+    const allSorted = teams.slice().sort((a, b) => b.score - a.score);
+    const statsRows = allSorted.map(t => `
+      <div class="st-row dnd-stat-row" style="grid-template-columns:60px 1fr 90px 140px">
+        <div class="st-val" style="color:${scoreColor(t.score)}">${t.score}</div>
+        <div class="st-name">${t.name} <span style="font-weight:400;color:var(--ink-faint)">${t.side === "away" ? "@" : "vs"} ${t.oppName}</span></div>
+        <div class="st-val" style="font-size:13px">${spreadTxt(t)}</div>
+        <div class="st-val" style="font-size:12px;color:var(--ink-faint)">${t.when}</div>
+      </div>`).join("");
 
     const box = document.getElementById("dndbox");
     if (!box) return;
@@ -4881,9 +4907,16 @@ function renderDragPickPrototype(wk, teams) {
           <div class="dnd-slots" id="dndslots">${slotsHtml}</div>
         </div>
         <div class="dnd-pool-col">
-          <div class="section-title">Available teams</div>
-          <div class="dnd-pool" id="dndpool">${poolHtml}</div>
+          <div class="section-title">Available teams — drag one to a slot</div>
+          <div class="dnd-pool dnd-pool-grid" id="dndpool">${poolHtml}</div>
         </div>
+      </div>
+      <div class="section-title" style="margin-top:28px">All matchups &amp; loser scores</div>
+      <div class="standings-table">
+        <div class="st-head" style="grid-template-columns:60px 1fr 90px 140px">
+          <div>Score</div><div>Team</div><div>Spread</div><div>Kickoff</div>
+        </div>
+        ${statsRows}
       </div>`;
     wireDrag();
   }
