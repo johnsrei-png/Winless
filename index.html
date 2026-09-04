@@ -46,6 +46,7 @@
   body[data-tab="standings"] .wrap { max-width: 1000px; } /* wide tables, week grid, pot, ledger */
   body[data-tab="award"] .wrap { max-width: 1000px; }     /* cutout, log, ledger — matches Standings width */
   body[data-tab="field"] .wrap { max-width: 920px; }      /* concentration bars + stats */
+  body[data-tab="test"] .wrap { max-width: 1000px; }      /* sandbox — matches Standings by default */
   /* On the pick screen the board/ranking reveal also benefits from width (shares "week" tab) */
 
   /* ---- Masthead ---- */
@@ -1026,6 +1027,7 @@
     <button class="tab" data-tab="standings">Standings</button>
     <button class="tab" data-tab="award">Weekly Award</button>
     <button class="tab" data-tab="field">Field</button>
+    <button class="tab" data-tab="test" id="testtab" style="display:none">🧪 Test</button>
   </nav>
 
   <div id="statusstrip" class="pot-strip status-strip" style="display:none"></div>
@@ -4735,6 +4737,11 @@ async function boot() {
     MY_PREFS = meP && meP.prefs ? (typeof meP.prefs === "string" ? JSON.parse(meP.prefs) : meP.prefs) : null;
     applyTheme(MY_PREFS);
     document.getElementById("tabs").style.display = "flex";
+    // sandbox tab — only ever visible to this one player, for trying out visual
+    // ideas before they go live for everyone else. Same code everyone loads;
+    // just hidden client-side for anyone who isn't this player.
+    const testTabEl = document.getElementById("testtab");
+    if (testTabEl) testTabEl.style.display = (ME === "reid") ? "" : "none";
     wireTabs();
     routeTab();
     maybePromptSetPassword();
@@ -4759,7 +4766,23 @@ function routeTab() {
   if (CURRENT_TAB === "field") renderField();
   else if (CURRENT_TAB === "standings") renderStandings();
   else if (CURRENT_TAB === "award") renderAward();
+  else if (CURRENT_TAB === "test") renderTest();
   else renderWeek();
+}
+
+// ============================================================
+//  SANDBOX TAB — private to one player, for trying out visual ideas before
+//  rolling them out to everyone else. Nothing here touches real game data;
+//  drop experiments in here as they come up, then move the finished version
+//  into the real tabs once it's approved.
+// ============================================================
+function renderTest() {
+  renderWhoami();
+  app.innerHTML = `
+    <div class="st-section-title">🧪 Sandbox — visible only to you</div>
+    <p class="hint" style="margin-bottom:20px">Nothing's here yet. This is a private space to try out new visual
+      ideas before Kurt and Tyler ever see them — safe to experiment, nothing here touches real game data.</p>
+    <div class="center-msg" style="padding:60px 0">Ask for something to be dropped in here to preview it.</div>`;
 }
 
 // ============================================================
@@ -4807,6 +4830,7 @@ async function safeRefresh() {
     if (CURRENT_TAB === "field") await renderField();
     else if (CURRENT_TAB === "standings") await renderStandings();
     else if (CURRENT_TAB === "award") await renderAward();
+    else if (CURRENT_TAB === "test") { /* nothing live to refresh in the sandbox */ }
     else await renderWeek();
   } catch (e) {
     // silent — a failed background refresh shouldn't disrupt anything
