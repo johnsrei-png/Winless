@@ -908,6 +908,34 @@
   }
   .pot-strip.ds-late .ps-amt { color: var(--alert); }
   .pot-strip.ds-late:hover { border-color: var(--alert); }
+  .status-strip.status-split {
+    padding: 0; gap: 0; overflow: hidden; cursor: default; border-left: none;
+  }
+  .status-strip.status-split:hover { transform: none; border-color: var(--line); }
+  .status-cell {
+    display: flex; align-items: center; gap: 12px; flex: 1; padding: 10px 16px; cursor: pointer;
+    transition: background .12s;
+  }
+  .status-cell:hover { background: rgba(255,255,255,0.03); }
+  .status-strip.status-split .status-cell:first-child {
+    border-right: 1px solid var(--line); border-left: 3px solid var(--alert);
+  }
+  .status-strip.status-split .status-cell:last-child { border-left: 3px solid var(--gold); }
+  .status-cell.ds-late .ps-amt { color: var(--alert); }
+  .arrow-caption { margin: -10px 0 18px 2px !important; font-size: 11px; opacity: 0.85; }
+
+  .jump-nav {
+    display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; margin-bottom: 20px;
+    -webkit-overflow-scrolling: touch; scrollbar-width: none;
+  }
+  .jump-nav::-webkit-scrollbar { display: none; }
+  .jump-pill {
+    flex-shrink: 0; background: var(--panel); border: 1px solid var(--line); color: var(--ink-dim);
+    font-family: 'Barlow Semi Condensed', sans-serif; font-size: 12px; font-weight: 600;
+    letter-spacing: 0.06em; text-transform: uppercase; text-decoration: none;
+    padding: 8px 14px; border-radius: 20px; white-space: nowrap; transition: border-color .12s, color .12s;
+  }
+  .jump-pill:hover { border-color: var(--gold); color: var(--gold); }
 
   .bd-caret { font-size: 11px; color: var(--ink-faint); }
   .ledger-row:hover { background: var(--panel-2); }
@@ -999,8 +1027,7 @@
     <button class="tab" data-tab="field">Field</button>
   </nav>
 
-  <div id="deadlinestrip" class="pot-strip" style="display:none"></div>
-  <div id="potstrip" class="pot-strip" style="display:none"></div>
+  <div id="statusstrip" class="pot-strip status-strip" style="display:none"></div>
 
   <main id="app"><div class="center-msg">Loading…</div></main>
 </div>
@@ -1273,7 +1300,7 @@ async function changeMyPassword() {
 function renderGate() {
   renderWhoami();
   document.body.removeAttribute("data-tab");   // default narrow width for sign-in
-  const strip = document.getElementById("potstrip");
+  const strip = document.getElementById("statusstrip");
   if (strip) strip.style.display = "none";
   app.innerHTML = `
     <div class="gate">
@@ -1555,16 +1582,8 @@ async function renderWeek() {
       </div>
     </div>
     <div class="tracker">${trackerHtml}</div>
-    <p class="hint" style="margin:-14px 0 18px 2px">🎯 <b>Possession arrow this week: ${arrowHolderName(wk.week_number) || "—"}</b> —
-      final tiebreaker for weekly wins/pot, only used if two players are tied on both record <i>and</i>
-      confidence points. Rotates one player per week.</p>
-    ${(!iSubmitted && wk.opened_at) ? (() => {
-        const deadline = nextTuesday5pmAfter(wk.opened_at);
-        const passed = new Date() >= deadline;
-        return passed ? "" : `<p class="hint" style="margin:-14px 0 18px 2px">⏰ Picks due by
-          <b>${deadline.toLocaleDateString("en-US",{weekday:"long"})} ${deadline.toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"})}</b> —
-          miss it and you'll have to solve a puzzle to get back in.</p>`;
-      })() : ""}`;
+    <p class="hint arrow-caption">🎯 Possession arrow this week: <b>${arrowHolderName(wk.week_number) || "—"}</b> —
+      final tiebreaker for weekly wins/pot, only if tied on record <i>and</i> confidence.</p>`;
 
   if (wk.status === "locked" || wk.status === "resolved") {
     await renderBoard(wk, headerHtml);
@@ -2359,42 +2378,6 @@ async function computePot() {
 }
 
 // Render the always-visible pot strip (under the tabs). Clicking jumps to Standings.
-async function renderPotStrip() {
-  const strip = document.getElementById("potstrip");
-  if (!strip || !ME || !PLAYERS.length) { if (strip) strip.style.display = "none"; return; }
-  try {
-    const { potTotal, potLeader, potTied } = await computePot();
-    const nameOf = id => PLAYERS.find(p => p.id === id)?.name || id;
-    let leadTxt;
-    if (potLeader && potLeader.wins > 0) {
-      leadTxt = potTied.length > 1
-        ? `Tied: ${potTied.map(t=>nameOf(t.id)).join(" & ")}`
-        : `Leader: ${nameOf(potLeader.id)}`;
-    } else {
-      leadTxt = "Building…";
-    }
-    strip.innerHTML = `
-      <span class="ps-label">Season Pot</span>
-      <span class="ps-amt">$${potTotal.toFixed(2)}</span>
-      <span class="ps-lead">${leadTxt}</span>`;
-    strip.style.display = "flex";
-    strip.onclick = () => {
-      CURRENT_TAB = "standings";
-      document.querySelectorAll(".tab").forEach(x => x.classList.toggle("active", x.dataset.tab === "standings"));
-      routeTab();
-      // once Standings has rendered, scroll the pot section into view
-      const tryScroll = (attempt = 0) => {
-        const el = document.getElementById("potsection");
-        if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
-        else if (attempt < 10) setTimeout(() => tryScroll(attempt + 1), 100);
-      };
-      setTimeout(() => tryScroll(), 150);
-    };
-  } catch (e) {
-    strip.style.display = "none";
-  }
-}
-
 // Format a countdown to a deadline as "1d 4h", "3h 12m", or "12m" — whichever
 // granularity is most useful given how far off it is.
 function formatCountdown(deadline) {
@@ -2409,37 +2392,69 @@ function formatCountdown(deadline) {
   return `${mins}m`;
 }
 
-// Persistent picks-deadline countdown — visible on every tab, not just This
-// Week, so the pressure is always in view. Hidden once you've submitted or
-// if there's no open week. Clicking jumps straight to This Week.
-async function renderDeadlineStrip() {
-  const strip = document.getElementById("deadlinestrip");
+// Single persistent status bar (pot + picks-deadline, when relevant) visible
+// on every tab. Combined into one compact strip instead of two stacked ones —
+// each half is independently clickable to jump to the right place.
+async function renderStatusStrip() {
+  const strip = document.getElementById("statusstrip");
   if (!strip || !ME || !PLAYERS.length) { if (strip) strip.style.display = "none"; return; }
   try {
+    const nameOf = id => PLAYERS.find(p => p.id === id)?.name || id;
+
+    // --- pot half (always shown once signed in) ---
+    const { potTotal, potLeader, potTied } = await computePot();
+    let leadTxt = "Building…";
+    if (potLeader && potLeader.wins > 0) {
+      leadTxt = potTied.length > 1 ? `Tied: ${potTied.map(t=>nameOf(t.id)).join(" & ")}` : `Leader: ${nameOf(potLeader.id)}`;
+    }
+    const potCell = `
+      <div class="status-cell" id="statuspot">
+        <span class="ps-label">Season Pot</span>
+        <span class="ps-amt">$${potTotal.toFixed(2)}</span>
+        <span class="ps-lead">${leadTxt}</span>
+      </div>`;
+
+    // --- deadline half (only when there's something actionable for ME) ---
+    let deadlineCell = "";
     const weeks = await sbGet("weeks?order=week_number.desc&limit=1");
-    if (!weeks || !weeks.length) { strip.style.display = "none"; return; }
-    const wk = weeks[0];
-    if (wk.status !== "open" || !wk.opened_at) { strip.style.display = "none"; return; }
+    if (weeks && weeks.length && weeks[0].status === "open" && weeks[0].opened_at) {
+      const wk = weeks[0];
+      const subs = await sbGet(`submissions?week_number=eq.${wk.week_number}&player_id=eq.${ME}`);
+      const iSubmitted = !!(subs && subs.length && subs[0].submitted);
+      if (!iSubmitted) {
+        const deadline = nextTuesday5pmAfter(wk.opened_at);
+        const passed = new Date() >= deadline;
+        const whenTxt = deadline.toLocaleDateString("en-US", { weekday: "short" }) + " " +
+          deadline.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+        deadlineCell = `
+          <div class="status-cell ${passed ? "ds-late" : ""}" id="statusdeadline">
+            <span class="ps-label">⏰ Week ${wk.week_number} picks</span>
+            <span class="ps-amt">${passed ? "Missed" : formatCountdown(deadline)}</span>
+            <span class="ps-lead">${passed ? "Solve the puzzle" : whenTxt}</span>
+          </div>`;
+      }
+    }
 
-    const subs = await sbGet(`submissions?week_number=eq.${wk.week_number}&player_id=eq.${ME}`);
-    const iSubmitted = !!(subs && subs.length && subs[0].submitted);
-    if (iSubmitted) { strip.style.display = "none"; return; }
-
-    const deadline = nextTuesday5pmAfter(wk.opened_at);
-    const passed = new Date() >= deadline;
-    const whenTxt = deadline.toLocaleDateString("en-US", { weekday: "short" }) + " " +
-      deadline.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-
-    strip.classList.toggle("ds-late", passed);
-    strip.innerHTML = passed
-      ? `<span class="ps-label">⏰ Week ${wk.week_number} picks</span>
-         <span class="ps-amt">Deadline missed</span>
-         <span class="ps-lead">Tap to solve the puzzle</span>`
-      : `<span class="ps-label">⏰ Week ${wk.week_number} picks due</span>
-         <span class="ps-amt">${formatCountdown(deadline)}</span>
-         <span class="ps-lead">${whenTxt}</span>`;
+    strip.innerHTML = deadlineCell + potCell;
     strip.style.display = "flex";
-    strip.onclick = () => {
+    strip.classList.toggle("status-split", !!deadlineCell);
+
+    const potEl = strip.querySelector("#statuspot");
+    if (potEl) potEl.onclick = (e) => {
+      e.stopPropagation();
+      CURRENT_TAB = "standings";
+      document.querySelectorAll(".tab").forEach(x => x.classList.toggle("active", x.dataset.tab === "standings"));
+      routeTab();
+      const tryScroll = (attempt = 0) => {
+        const el = document.getElementById("potsection");
+        if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+        else if (attempt < 10) setTimeout(() => tryScroll(attempt + 1), 100);
+      };
+      setTimeout(() => tryScroll(), 150);
+    };
+    const dlEl = strip.querySelector("#statusdeadline");
+    if (dlEl) dlEl.onclick = (e) => {
+      e.stopPropagation();
       CURRENT_TAB = "week";
       document.querySelectorAll(".tab").forEach(x => x.classList.toggle("active", x.dataset.tab === "week"));
       routeTab();
@@ -3057,7 +3072,7 @@ async function renderStandings() {
   };
 
   const ledgerHtml = anyMoney ? `
-    <div class="st-weekly">
+    <div class="st-weekly" id="ledgersection">
       <div class="st-section-title">Money — the peel ledger</div>
       <div class="standings-table">
         <div class="st-head" style="grid-template-columns:1fr 120px">
@@ -3097,7 +3112,7 @@ async function renderStandings() {
       </div>`;
     }).join("");
     olSeasonHtml = `
-      <div class="st-weekly">
+      <div class="st-weekly" id="olsection">
         <div class="st-section-title">${olBadgeSvg(16)} Only Losses — season record</div>
         ${olResults.length ? `
           <div class="standings-table">
@@ -3134,7 +3149,7 @@ async function renderStandings() {
       }).join("");
       const totalN = buckets.reduce((s, b) => s + b.count, 0);
       accuracyHtml = `
-        <div class="st-weekly">
+        <div class="st-weekly" id="accsection">
           <div class="st-section-title">Model Accuracy — predicted vs. actual</div>
           <div class="standings-table">
             <div class="st-head" style="grid-template-columns:1fr 100px 100px 90px">
@@ -3159,7 +3174,7 @@ async function renderStandings() {
           <div class="st-val" style="color:var(--ink-faint)">0</div>
         </div>`).join("");
       accuracyHtml = `
-        <div class="st-weekly">
+        <div class="st-weekly" id="accsection">
           <div class="st-section-title">Model Accuracy — predicted vs. actual</div>
           <div class="standings-table" style="opacity:0.55">
             <div class="st-head" style="grid-template-columns:1fr 100px 100px 90px">
@@ -3179,7 +3194,15 @@ async function renderStandings() {
   } catch (e) { /* accuracy tracker is a nicety; standings still render fine without it */ }
 
   app.innerHTML = `
-    <div class="st-section-title">Season Standings — pick accuracy</div>
+    <div class="jump-nav">
+      <a href="#lbsection" class="jump-pill">Leaderboard</a>
+      <a href="#gridsection" class="jump-pill">Week by week</a>
+      <a href="#potsection" class="jump-pill">Pot</a>
+      ${anyMoney ? `<a href="#ledgersection" class="jump-pill">Ledger</a>` : ""}
+      <a href="#olsection" class="jump-pill">Only Losses</a>
+      <a href="#accsection" class="jump-pill">Accuracy</a>
+    </div>
+    <div id="lbsection" class="st-section-title">Season Standings — pick accuracy</div>
     <div class="standings-table">
       <div class="st-head">
         <div style="text-align:center">#</div>
@@ -3195,7 +3218,7 @@ async function renderStandings() {
       actually lost (rank 1 on an 8-pick week = 8 points). Ranked by most correct, confidence breaks ties —
       the "seeing the ball best" leader.${picks.length === 0 ? " Nothing graded yet — records fill in once results come in." : (anyPending ? " Some picks are still pending this week's results." : "")}</p>
 
-    <div class="st-weekly">
+    <div class="st-weekly" id="gridsection">
       <div class="st-section-title">Week by week</div>
       <div class="wk-grid"><table>${gridHead}${gridBody}</table></div>
     </div>
@@ -3203,6 +3226,15 @@ async function renderStandings() {
     ${ledgerHtml}
     ${olSeasonHtml}
     ${accuracyHtml}`;
+
+  // smooth-scroll the jump nav (with a little offset so headers aren't flush to the tab bar)
+  app.querySelectorAll(".jump-pill").forEach(a => {
+    a.onclick = (e) => {
+      e.preventDefault();
+      const el = document.querySelector(a.getAttribute("href"));
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+    };
+  });
 
   // wire ledger drill-down toggles
   app.querySelectorAll(".ledger-row").forEach(row => {
@@ -4720,8 +4752,7 @@ function wireTabs() {
 function routeTab() {
   document.body.setAttribute("data-tab", CURRENT_TAB);
   app.innerHTML = `<div class="center-msg">Loading…</div>`;
-  renderPotStrip();   // keep the persistent pot readout current on every tab
-  renderDeadlineStrip();   // keep the persistent picks-deadline countdown current on every tab
+  renderStatusStrip();   // keep the persistent pot + deadline readout current on every tab
   if (CURRENT_TAB === "field") renderField();
   else if (CURRENT_TAB === "standings") renderStandings();
   else if (CURRENT_TAB === "award") renderAward();
@@ -4769,8 +4800,7 @@ async function safeRefresh() {
   _refreshing = true;
   try {
     // re-render the current tab WITHOUT the "Loading…" flash
-    renderPotStrip();
-    renderDeadlineStrip();
+    renderStatusStrip();
     if (CURRENT_TAB === "field") await renderField();
     else if (CURRENT_TAB === "standings") await renderStandings();
     else if (CURRENT_TAB === "award") await renderAward();
