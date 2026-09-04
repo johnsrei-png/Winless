@@ -853,6 +853,46 @@
     max-width: 340px; margin: 0 auto; border: 1px dashed var(--line); border-radius: 10px;
   }
 
+  /* ---- Sandbox: drag-to-pick prototype ---- */
+  .dnd-slots { display: flex; flex-direction: column; gap: 8px; }
+  .dnd-slot {
+    display: flex; align-items: center; gap: 12px; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; min-height: 58px;
+  }
+  .dnd-slot-rank {
+    font-family: 'Barlow Semi Condensed', sans-serif; font-weight: 700; font-size: 20px;
+    color: var(--alert); width: 34px; text-align: center; flex-shrink: 0; line-height: 1.1;
+  }
+  .dnd-slot-pts {
+    display: block; font-size: 9px; color: var(--ink-faint); font-weight: 400; letter-spacing: 0.06em;
+  }
+  .dnd-slot-body { flex: 1; min-width: 0; }
+  .dnd-slot-empty {
+    color: var(--ink-faint); font-size: 12px; font-style: italic; padding: 10px; text-align: center;
+    border: 1px dashed var(--line); border-radius: 8px;
+  }
+  .dnd-pool {
+    display: flex; flex-wrap: wrap; gap: 8px; background: var(--panel-2);
+    border: 1px solid var(--line); border-radius: 10px; padding: 12px; min-height: 70px;
+  }
+  .dnd-tile {
+    display: flex; align-items: center; gap: 10px; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px;
+    cursor: grab; touch-action: none; -webkit-tap-highlight-color: transparent;
+    width: 168px; flex-shrink: 0;
+  }
+  .dnd-tile.placed { width: 100%; }
+  .dnd-tile.dragging {
+    cursor: grabbing; z-index: 20; box-shadow: 0 10px 24px rgba(0,0,0,0.5); border-color: var(--gold);
+  }
+  .dnd-score {
+    font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-size: 22px;
+    width: 30px; text-align: center; flex-shrink: 0; line-height: 1;
+  }
+  .dnd-teaminfo { min-width: 0; }
+  .dnd-name { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .dnd-meta { font-size: 11px; color: var(--ink-faint); }
+
   /* ---- Only Losses reveal ---- */
   .ol-reveal {
     background: linear-gradient(160deg, rgba(245,196,81,0.10), rgba(245,196,81,0.02));
@@ -4776,13 +4816,136 @@ function routeTab() {
 //  drop experiments in here as they come up, then move the finished version
 //  into the real tabs once it's approved.
 // ============================================================
-function renderTest() {
+async function renderTest() {
   renderWhoami();
+  app.innerHTML = `<div class="center-msg">Loading…</div>`;
+  try {
+    const weeks = await sbGet("weeks?order=week_number.desc&limit=1");
+    if (!weeks || !weeks.length) {
+      app.innerHTML = `<div class="center-msg">No week open to preview against.</div>`;
+      return;
+    }
+    const wk = weeks[0];
+    const teams = await computeBestLoserScores(wk.week_number).catch(() => []);
+    if (!teams.length) {
+      app.innerHTML = `<div class="center-msg">No matchups posted yet for Week ${wk.week_number}.</div>`;
+      return;
+    }
+    renderDragPickPrototype(wk, teams);
+  } catch (e) {
+    app.innerHTML = `<div class="center-msg">Couldn't load: ${e.message}</div>`;
+  }
+}
+
+// Drag-and-drop pick experiment: teams as draggable score tiles, dragged into
+// ranked slots instead of dropdowns. Pure interaction prototype — nothing here
+// writes to Supabase or touches real picks; it's testing the feel only.
+function renderDragPickPrototype(wk, teams) {
+  const N = wk.picks_required;
+  let slots = new Array(N).fill(null);            // slots[i] = team object or null
+  let pool = teams.slice().sort((a, b) => b.score - a.score);
+
+  const scoreColor = (s) => s >= 65 ? "var(--live)" : s >= 50 ? "var(--gold)" : "var(--ink-faint)";
+
+  function tileHtml(t, extra = "") {
+    return `<div class="dnd-tile ${extra}" data-ab="${t.ab}">
+      <div class="dnd-score" style="color:${scoreColor(t.score)}">${t.score}</div>
+      <div class="dnd-teaminfo">
+        <div class="dnd-name">${t.name}</div>
+        <div class="dnd-meta">${t.side === "away" ? "@" : "vs"} ${t.oppName}</div>
+      </div>
+    </div>`;
+  }
+
+  function render() {
+    const slotsHtml = slots.map((t, i) => {
+      const pts = N - i;
+      return `<div class="dnd-slot" data-slot="${i}">
+        <div class="dnd-slot-rank">${i + 1}<span class="dnd-slot-pts">${pts} pt${pts !== 1 ? "s" : ""}</span></div>
+        <div class="dnd-slot-body">${t ? tileHtml(t, "placed") : `<div class="dnd-slot-empty">drop here</div>`}</div>
+      </div>`;
+    }).join("");
+
+    const poolHtml = pool.map(t => tileHtml(t)).join("");
+
+    const box = document.getElementById("dndbox");
+    if (!box) return;
+    box.innerHTML = `
+      <div class="dnd-slots" id="dndslots">${slotsHtml}</div>
+      <div class="section-title" style="margin-top:24px">Available teams — drag into a slot</div>
+      <div class="dnd-pool" id="dndpool">${poolHtml}</div>`;
+    wireDrag();
+  }
+
+  function findTeam(ab) { return teams.find(t => t.ab === ab); }
+
+  function wireDrag() {
+    document.querySelectorAll(".dnd-tile").forEach(tile => {
+      tile.onpointerdown = (e) => {
+        e.preventDefault();
+        const ab = tile.dataset.ab;
+        const fromSlot = tile.closest(".dnd-slot") ? +tile.closest(".dnd-slot").dataset.slot : null;
+        const startX = e.clientX, startY = e.clientY;
+        const rect = tile.getBoundingClientRect();
+        tile.setPointerCapture(e.pointerId);
+        tile.classList.add("dragging");
+        tile.style.width = rect.width + "px";
+
+        const move = (ev) => {
+          tile.style.transform = `translate(${ev.clientX - startX}px, ${ev.clientY - startY}px)`;
+        };
+        const up = (ev) => {
+          tile.classList.remove("dragging");
+          tile.style.transform = ""; tile.style.width = "";
+          tile.removeEventListener("pointermove", move);
+          tile.removeEventListener("pointerup", up);
+          try { tile.releasePointerCapture(ev.pointerId); } catch (err) {}
+
+          tile.style.pointerEvents = "none";
+          const el = document.elementFromPoint(ev.clientX, ev.clientY);
+          tile.style.pointerEvents = "";
+          const targetSlotEl = el ? el.closest(".dnd-slot") : null;
+          const targetPoolEl = el ? el.closest(".dnd-pool") : null;
+
+          const team = findTeam(ab);
+          if (targetSlotEl) {
+            const toSlot = +targetSlotEl.dataset.slot;
+            const bumped = slots[toSlot];
+            if (fromSlot != null) {
+              // moving between two slots — swap
+              slots[fromSlot] = bumped;
+              slots[toSlot] = team;
+            } else {
+              // coming from the pool — remove from pool, place in slot, bump any
+              // existing occupant back to the pool
+              pool = pool.filter(t => t.ab !== ab);
+              if (bumped) pool.push(bumped);
+              slots[toSlot] = team;
+            }
+          } else if (targetPoolEl || !el) {
+            // dropped back in the pool (or off any valid target) — return it
+            if (fromSlot != null) {
+              slots[fromSlot] = null;
+              if (!pool.find(t => t.ab === ab)) pool.push(team);
+            }
+            // if it came from the pool and was dropped back in the pool, no-op
+          }
+          pool.sort((a, b) => b.score - a.score);
+          render();
+        };
+        tile.addEventListener("pointermove", move);
+        tile.addEventListener("pointerup", up);
+      };
+    });
+  }
+
   app.innerHTML = `
-    <div class="st-section-title">🧪 Sandbox — visible only to you</div>
-    <p class="hint" style="margin-bottom:20px">Nothing's here yet. This is a private space to try out new visual
-      ideas before Kurt and Tyler ever see them — safe to experiment, nothing here touches real game data.</p>
-    <div class="center-msg" style="padding:60px 0">Ask for something to be dropped in here to preview it.</div>`;
+    <div class="st-section-title">🧪 Drag-to-pick prototype — Week ${wk.week_number}</div>
+    <p class="hint" style="margin-bottom:20px">Testing tiles instead of dropdowns. Drag a team's score tile into a
+      ranked slot; drag a placed tile back out to the pool to swap it, or drag another tile onto an occupied slot
+      to bump it out. <b>This doesn't save anything</b> — pure interaction test.</p>
+    <div id="dndbox"></div>`;
+  render();
 }
 
 // ============================================================
