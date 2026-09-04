@@ -832,6 +832,25 @@
   .acc-ok { color: var(--gold); }
   .acc-off { color: var(--alert); }
 
+  /* ---- Late-pick puzzle gate ---- */
+  .puzzle-frame { margin-top: 20px; }
+  .puzzle-grid {
+    display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr);
+    gap: 3px; width: 100%; max-width: 340px; aspect-ratio: 1; margin: 0 auto;
+    border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--bg);
+  }
+  .puzzle-slot { position: relative; background: var(--panel-2); }
+  .puzzle-piece {
+    position: absolute; inset: 0; cursor: grab; touch-action: none;
+    border-radius: 3px;
+  }
+  .puzzle-piece.dragging { cursor: grabbing; z-index: 10; box-shadow: 0 8px 22px rgba(0,0,0,0.55); }
+  .puzzle-missing {
+    display: flex; align-items: center; justify-content: center; text-align: center;
+    color: var(--ink-faint); font-size: 13px; padding: 40px 20px; line-height: 1.6;
+    max-width: 340px; margin: 0 auto; border: 1px dashed var(--line); border-radius: 10px;
+  }
+
   /* ---- Only Losses reveal ---- */
   .ol-reveal {
     background: linear-gradient(160deg, rgba(245,196,81,0.10), rgba(245,196,81,0.02));
@@ -882,6 +901,12 @@
     margin-left: auto; font-size: 12px; color: var(--ink-dim);
     font-family: 'Barlow Semi Condensed', sans-serif; letter-spacing: 0.04em;
   }
+  .pot-strip.ds-late {
+    background: linear-gradient(90deg, rgba(255,77,61,0.14), rgba(255,77,61,0.02));
+    border-left-color: var(--alert);
+  }
+  .pot-strip.ds-late .ps-amt { color: var(--alert); }
+  .pot-strip.ds-late:hover { border-color: var(--alert); }
 
   .bd-caret { font-size: 11px; color: var(--ink-faint); }
   .ledger-row:hover { background: var(--panel-2); }
@@ -973,6 +998,7 @@
     <button class="tab" data-tab="field">Field</button>
   </nav>
 
+  <div id="deadlinestrip" class="pot-strip" style="display:none"></div>
   <div id="potstrip" class="pot-strip" style="display:none"></div>
 
   <main id="app"><div class="center-msg">Loading…</div></main>
@@ -1341,6 +1367,132 @@ async function maybePromptSetPassword() {
 }
 
 // ---- Pick submission screen ----
+// ============================================================
+//  PICKS DEADLINE — Tuesday 5:00 PM (local time), computed from when the
+//  week opened. Miss it without submitting and the puzzle gate below kicks in.
+// ============================================================
+function nextTuesday5pmAfter(openedAt) {
+  const d = new Date(openedAt);
+  const candidate = new Date(d);
+  candidate.setHours(17, 0, 0, 0);
+  const diff = (2 - candidate.getDay() + 7) % 7;   // 2 = Tuesday
+  candidate.setDate(candidate.getDate() + diff);
+  if (candidate.getTime() < d.getTime()) candidate.setDate(candidate.getDate() + 7);
+  return candidate;
+}
+
+const LATE_PUZZLE_IMAGE = "latepuzzle.jpg";   // commit this file next to index.html
+const PUZZLE_GRID = 3;                        // 3x3 = 9 pieces
+
+function shuffledSlots(n) {
+  const arr = Array.from({ length: n }, (_, i) => i);
+  let solved = true;
+  do {
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    solved = arr.every((v, i) => v === i);
+  } while (solved);   // never hand out an already-solved shuffle
+  return arr;
+}
+
+// The puzzle gate: a drag-to-swap jigsaw. slots[slotIndex] = which image chunk
+// currently sits there; solved when slots[i] === i for every i. Built on Pointer
+// Events (not native HTML5 drag) so it actually works on touch, not just mouse.
+function renderPuzzleGate(wk, headerHtml) {
+  const N = PUZZLE_GRID, total = N * N;
+  let slots = shuffledSlots(total);
+
+  const pieceStyle = (contentIndex) => {
+    const row = Math.floor(contentIndex / N), col = contentIndex % N;
+    const pct = 100 / (N - 1);
+    return `background-image:url('${LATE_PUZZLE_IMAGE}');background-size:${N * 100}% ${N * 100}%;background-position:${col * pct}% ${row * pct}%;`;
+  };
+  const checkSolved = () => slots.every((v, i) => v === i);
+
+  function renderPieces() {
+    const grid = document.getElementById("puzzlegrid");
+    if (!grid) return;
+    grid.innerHTML = slots.map((contentIdx, slotIdx) => `
+      <div class="puzzle-slot" data-slot="${slotIdx}">
+        <div class="puzzle-piece" data-slot="${slotIdx}" style="${pieceStyle(contentIdx)}"></div>
+      </div>`).join("");
+    wireDrag();
+  }
+
+  function wireDrag() {
+    document.querySelectorAll(".puzzle-piece").forEach(piece => {
+      piece.onpointerdown = (e) => {
+        e.preventDefault();
+        const startX = e.clientX, startY = e.clientY;
+        const fromSlot = +piece.dataset.slot;
+        piece.setPointerCapture(e.pointerId);
+        piece.classList.add("dragging");
+        const move = (ev) => {
+          piece.style.transform = `translate(${ev.clientX - startX}px, ${ev.clientY - startY}px)`;
+        };
+        const up = (ev) => {
+          piece.classList.remove("dragging");
+          piece.style.transform = "";
+          piece.removeEventListener("pointermove", move);
+          piece.removeEventListener("pointerup", up);
+          try { piece.releasePointerCapture(ev.pointerId); } catch (err) {}
+          // hide the dragged piece momentarily so elementFromPoint sees the slot beneath it
+          piece.style.pointerEvents = "none";
+          const el = document.elementFromPoint(ev.clientX, ev.clientY);
+          piece.style.pointerEvents = "";
+          const slotEl = el ? el.closest(".puzzle-slot") : null;
+          if (slotEl) {
+            const toSlot = +slotEl.dataset.slot;
+            if (toSlot !== fromSlot) [slots[fromSlot], slots[toSlot]] = [slots[toSlot], slots[fromSlot]];
+          }
+          renderPieces();
+          if (checkSolved()) {
+            localStorage.setItem(`winless_puzzle_solved_wk${wk.week_number}_${ME}`, "1");
+            showSolved();
+          }
+        };
+        piece.addEventListener("pointermove", move);
+        piece.addEventListener("pointerup", up);
+      };
+    });
+  }
+
+  function showSolved() {
+    const box = document.getElementById("puzzlebox");
+    if (!box) return;
+    box.innerHTML = `
+      <div class="locked-card">
+        <div class="locked-badge">✓ Puzzle solved</div>
+        <div class="locked-sub">Nice work — you're clear to make your picks.</div>
+        <div class="locked-actions">
+          <button class="btn btn-primary" id="continuetopicks">Continue to picks</button>
+        </div>
+      </div>`;
+    document.getElementById("continuetopicks").onclick = () => renderWeek();
+  }
+
+  app.innerHTML = headerHtml + `
+    <div class="puzzle-wrap" id="puzzlebox">
+      <div class="locked-card" style="max-width:440px">
+        <div class="locked-badge" style="color:var(--alert)">⏰ Picks deadline missed</div>
+        <div class="locked-sub">Tuesday 5:00 PM came and went and you hadn't submitted.
+          Drag the pieces back into place to earn your way back in.</div>
+        <div class="puzzle-frame">
+          <div class="puzzle-grid" id="puzzlegrid"></div>
+          <img src="${LATE_PUZZLE_IMAGE}" alt="" style="display:none"
+            onerror="document.getElementById('puzzlemissing').style.display='flex';document.getElementById('puzzlegrid').style.display='none'">
+          <div class="puzzle-missing" id="puzzlemissing" style="display:none">No puzzle image yet. Commit a photo named
+            <b>${LATE_PUZZLE_IMAGE}</b> next to index.html in your repo.</div>
+        </div>
+      </div>
+    </div>`;
+
+  renderPieces();
+}
+
+
 async function renderWeek() {
   renderWhoami();
   window._pickScreenActive = false;   // set true only when the pick grid renders
@@ -1404,11 +1556,32 @@ async function renderWeek() {
     <div class="tracker">${trackerHtml}</div>
     <p class="hint" style="margin:-14px 0 18px 2px">🎯 <b>Possession arrow this week: ${arrowHolderName(wk.week_number) || "—"}</b> —
       final tiebreaker for weekly wins/pot, only used if two players are tied on both record <i>and</i>
-      confidence points. Rotates one player per week.</p>`;
+      confidence points. Rotates one player per week.</p>
+    ${(!iSubmitted && wk.opened_at) ? (() => {
+        const deadline = nextTuesday5pmAfter(wk.opened_at);
+        const passed = new Date() >= deadline;
+        return passed ? "" : `<p class="hint" style="margin:-14px 0 18px 2px">⏰ Picks due by
+          <b>${deadline.toLocaleDateString("en-US",{weekday:"long"})} ${deadline.toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"})}</b> —
+          miss it and you'll have to solve a puzzle to get back in.</p>`;
+      })() : ""}`;
 
   if (wk.status === "locked" || wk.status === "resolved") {
     await renderBoard(wk, headerHtml);
     return;
+  }
+
+  // Picks deadline gate: Tuesday 5pm (local time) after the week opened. Miss it
+  // without submitting and the pick screen is replaced by a puzzle you must solve
+  // to get back in — a bit of shame with a real toll, not just a nag banner.
+  if (!iSubmitted && wk.opened_at) {
+    const deadline = nextTuesday5pmAfter(wk.opened_at);
+    if (new Date() >= deadline) {
+      const solvedKey = `winless_puzzle_solved_wk${wk.week_number}_${ME}`;
+      if (!localStorage.getItem(solvedKey)) {
+        renderPuzzleGate(wk, headerHtml);
+        return;
+      }
+    }
   }
 
   // If I've already submitted and haven't chosen to edit, show a clean "locked in" summary
@@ -2211,6 +2384,60 @@ async function renderPotStrip() {
         else if (attempt < 10) setTimeout(() => tryScroll(attempt + 1), 100);
       };
       setTimeout(() => tryScroll(), 150);
+    };
+  } catch (e) {
+    strip.style.display = "none";
+  }
+}
+
+// Format a countdown to a deadline as "1d 4h", "3h 12m", or "12m" — whichever
+// granularity is most useful given how far off it is.
+function formatCountdown(deadline) {
+  const diffMs = deadline - new Date();
+  if (diffMs <= 0) return null;
+  const totalMin = Math.floor(diffMs / 60000);
+  const days = Math.floor(totalMin / 1440);
+  const hours = Math.floor((totalMin % 1440) / 60);
+  const mins = totalMin % 60;
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h ${mins}m`;
+  return `${mins}m`;
+}
+
+// Persistent picks-deadline countdown — visible on every tab, not just This
+// Week, so the pressure is always in view. Hidden once you've submitted or
+// if there's no open week. Clicking jumps straight to This Week.
+async function renderDeadlineStrip() {
+  const strip = document.getElementById("deadlinestrip");
+  if (!strip || !ME || !PLAYERS.length) { if (strip) strip.style.display = "none"; return; }
+  try {
+    const weeks = await sbGet("weeks?order=week_number.desc&limit=1");
+    if (!weeks || !weeks.length) { strip.style.display = "none"; return; }
+    const wk = weeks[0];
+    if (wk.status !== "open" || !wk.opened_at) { strip.style.display = "none"; return; }
+
+    const subs = await sbGet(`submissions?week_number=eq.${wk.week_number}&player_id=eq.${ME}`);
+    const iSubmitted = !!(subs && subs.length && subs[0].submitted);
+    if (iSubmitted) { strip.style.display = "none"; return; }
+
+    const deadline = nextTuesday5pmAfter(wk.opened_at);
+    const passed = new Date() >= deadline;
+    const whenTxt = deadline.toLocaleDateString("en-US", { weekday: "short" }) + " " +
+      deadline.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+
+    strip.classList.toggle("ds-late", passed);
+    strip.innerHTML = passed
+      ? `<span class="ps-label">⏰ Week ${wk.week_number} picks</span>
+         <span class="ps-amt">Deadline missed</span>
+         <span class="ps-lead">Tap to solve the puzzle</span>`
+      : `<span class="ps-label">⏰ Week ${wk.week_number} picks due</span>
+         <span class="ps-amt">${formatCountdown(deadline)}</span>
+         <span class="ps-lead">${whenTxt}</span>`;
+    strip.style.display = "flex";
+    strip.onclick = () => {
+      CURRENT_TAB = "week";
+      document.querySelectorAll(".tab").forEach(x => x.classList.toggle("active", x.dataset.tab === "week"));
+      routeTab();
     };
   } catch (e) {
     strip.style.display = "none";
@@ -3252,15 +3479,16 @@ async function commishTools(overlay) {
     try {
       // if this week number already exists, update it; else insert
       const existing = weeks.find(w => w.week_number === wknum);
+      const openedAt = new Date().toISOString();
       if (existing) {
         await sb(`weeks?week_number=eq.${wknum}`, {
           method: "PATCH",
-          body: JSON.stringify({ entries_remaining: wkentries, picks_required: wkpicks, status: "open" }),
+          body: JSON.stringify({ entries_remaining: wkentries, picks_required: wkpicks, status: "open", opened_at: openedAt }),
         });
       } else {
         await sb("weeks", {
           method: "POST",
-          body: JSON.stringify({ week_number: wknum, entries_remaining: wkentries, picks_required: wkpicks, status: "open" }),
+          body: JSON.stringify({ week_number: wknum, entries_remaining: wkentries, picks_required: wkpicks, status: "open", opened_at: openedAt }),
         });
       }
       msg.className = "msg ok"; msg.textContent = `Week ${wknum} is open. Reloading…`;
@@ -4396,6 +4624,7 @@ function routeTab() {
   document.body.setAttribute("data-tab", CURRENT_TAB);
   app.innerHTML = `<div class="center-msg">Loading…</div>`;
   renderPotStrip();   // keep the persistent pot readout current on every tab
+  renderDeadlineStrip();   // keep the persistent picks-deadline countdown current on every tab
   if (CURRENT_TAB === "field") renderField();
   else if (CURRENT_TAB === "standings") renderStandings();
   else if (CURRENT_TAB === "award") renderAward();
@@ -4429,6 +4658,9 @@ function userIsBusy() {
     const picksSelects = document.querySelectorAll("select.team");
     if (Array.from(picksSelects).some(s => s.value)) return true;
   }
+  // never re-render out from under someone mid-puzzle — it would re-shuffle
+  // and wipe their progress
+  if (CURRENT_TAB === "week" && document.getElementById("puzzlegrid")) return true;
   return false;
 }
 
@@ -4441,6 +4673,7 @@ async function safeRefresh() {
   try {
     // re-render the current tab WITHOUT the "Loading…" flash
     renderPotStrip();
+    renderDeadlineStrip();
     if (CURRENT_TAB === "field") await renderField();
     else if (CURRENT_TAB === "standings") await renderStandings();
     else if (CURRENT_TAB === "award") await renderAward();
