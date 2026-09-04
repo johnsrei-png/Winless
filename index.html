@@ -44,7 +44,7 @@
      Header + tabs live in .wrap too, so they track the active tab's width — which is fine. */
   body[data-tab="week"] .wrap { max-width: 1040px; }      /* picks + matchups two-column */
   body[data-tab="standings"] .wrap { max-width: 1000px; } /* wide tables, week grid, pot, ledger */
-  body[data-tab="award"] .wrap { max-width: 760px; }      /* cutout + log: mostly centered, keep tight */
+  body[data-tab="award"] .wrap { max-width: 1000px; }     /* cutout, log, ledger — matches Standings width */
   body[data-tab="field"] .wrap { max-width: 920px; }      /* concentration bars + stats */
   /* On the pick screen the board/ranking reveal also benefits from width (shares "week" tab) */
 
@@ -620,6 +620,7 @@
   /* ---- Weekly Award / cutout ---- */
   .award-intro { font-size: 13px; color: var(--ink-dim); line-height: 1.55; margin: 0 0 18px 2px; }
   .award-intro b { color: var(--ink); }
+  .award-inner { max-width: 640px; margin: 0 auto; }
   .winner-banner {
     display: flex; align-items: center; justify-content: space-between; gap: 16px;
     background: linear-gradient(90deg, rgba(245,196,81,0.12), transparent);
@@ -3903,24 +3904,26 @@ async function renderAward() {
   }, 0);
 
   app.innerHTML = `
-    <div class="st-section-title">Weekly Award — peel the cutout</div>
-    <p class="award-intro">Each week's best record peels ${PEELS_PER_WEEK} tiles. Tiles hide dollar amounts
-      <b>both others owe you</b> ($0.25–$10), plus surprises: <b style="color:var(--alert)">penalty tiles</b>
-      (you pay the season pot), a <b style="color:var(--gold)">$25 jackpot</b>, and <b style="color:var(--gold)">×2 multipliers</b>
-      that double your next peel — good or bad. ${peeledTiles.size} of ${TILE_COUNT} revealed ·
-      <b style="color:var(--live)">$${totalPot.toFixed(2)}</b> in player winnings. Ledger on Standings.</p>
-    ${banner}
-    <div class="cutout-wrap">
-      <img class="cutout-img" src="${CUTOUT_IMAGE}" alt="cutout"
-        onerror="this.style.display='none';this.nextElementSibling.nextElementSibling.style.display='flex'">
-      <div class="cutout-grid">${tilesHtml}</div>
-      <div class="cutout-missing" style="display:none">
-        No image yet. Commit a photo named <b>${CUTOUT_IMAGE}</b> next to index.html in your repo,
-        and it'll appear here under the tiles.
+    <div class="award-inner">
+      <div class="st-section-title">Weekly Award — peel the cutout</div>
+      <p class="award-intro">Each week's best record peels ${PEELS_PER_WEEK} tiles. Tiles hide dollar amounts
+        <b>both others owe you</b> ($0.25–$10), plus surprises: <b style="color:var(--alert)">penalty tiles</b>
+        (you pay the season pot), a <b style="color:var(--gold)">$25 jackpot</b>, and <b style="color:var(--gold)">×2 multipliers</b>
+        that double your next peel — good or bad. ${peeledTiles.size} of ${TILE_COUNT} revealed ·
+        <b style="color:var(--live)">$${totalPot.toFixed(2)}</b> in player winnings. Ledger on Standings.</p>
+      ${banner}
+      <div class="cutout-wrap">
+        <img class="cutout-img" src="${CUTOUT_IMAGE}" alt="cutout"
+          onerror="this.style.display='none';this.nextElementSibling.nextElementSibling.style.display='flex'">
+        <div class="cutout-grid">${tilesHtml}</div>
+        <div class="cutout-missing" style="display:none">
+          No image yet. Commit a photo named <b>${CUTOUT_IMAGE}</b> next to index.html in your repo,
+          and it'll appear here under the tiles.
+        </div>
       </div>
-    </div>
-    <div class="award-status">${canPeel ? (multiplierArmed ? "×2 is armed — your next tile doubles. Tap a tile." : `Tap ${peelsLeftThisWeek === 1 ? "a covered tile" : "covered tiles"} to peel.`) : ""}</div>
-    ${logRows ? `<div class="award-log"><h3>Peel history</h3>${logRows}</div>` : ""}`;
+      <div class="award-status">${canPeel ? (multiplierArmed ? "×2 is armed — your next tile doubles. Tap a tile." : `Tap ${peelsLeftThisWeek === 1 ? "a covered tile" : "covered tiles"} to peel.`) : ""}</div>
+      ${logRows ? `<div class="award-log"><h3>Peel history</h3>${logRows}</div>` : ""}
+    </div>`;
 
   if (canPeel) {
     const grid = app.querySelector(".cutout-grid");
