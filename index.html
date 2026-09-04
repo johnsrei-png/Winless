@@ -854,17 +854,19 @@
   }
 
   /* ---- Sandbox: drag-to-pick prototype ---- */
-  .dnd-slots { display: flex; flex-direction: column; gap: 8px; }
+  .dnd-slots { display: flex; flex-wrap: wrap; gap: 8px; }
   .dnd-slot {
-    display: flex; align-items: center; gap: 12px; background: var(--panel);
-    border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; min-height: 58px;
+    display: flex; flex-direction: column; gap: 6px; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 10px; padding: 10px; min-height: 90px;
+    width: 168px; flex-shrink: 0;
   }
   .dnd-slot-rank {
-    font-family: 'Barlow Semi Condensed', sans-serif; font-weight: 700; font-size: 20px;
-    color: var(--alert); width: 34px; text-align: center; flex-shrink: 0; line-height: 1.1;
+    display: flex; align-items: baseline; gap: 6px;
+    font-family: 'Barlow Semi Condensed', sans-serif; font-weight: 700; font-size: 17px;
+    color: var(--alert); line-height: 1.1;
   }
   .dnd-slot-pts {
-    display: block; font-size: 9px; color: var(--ink-faint); font-weight: 400; letter-spacing: 0.06em;
+    display: inline; font-size: 9px; color: var(--ink-faint); font-weight: 400; letter-spacing: 0.06em;
   }
   .dnd-slot-body { flex: 1; min-width: 0; }
   .dnd-slot-empty {
