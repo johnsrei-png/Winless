@@ -1008,6 +1008,19 @@ const TEAMS = [
 ];
 const TEAM_NAME = Object.fromEntries(TEAMS.map(t => [t[0], t[1]]));
 
+// Only Losses' badge — an original circular monogram in Winless's own dark/gold
+// palette (not a copy of any real platform's logo, colors, or wordmark — just
+// the same general "circular two-letter badge" genre as a wink at the pun).
+// `size` in px; returns an inline <svg> string.
+function olBadgeSvg(size = 22) {
+  return `<svg width="${size}" height="${size}" viewBox="0 0 44 44" style="vertical-align:-5px" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="22" cy="22" r="20.5" fill="#15181f" stroke="#f5c451" stroke-width="2"/>
+    <text x="22" y="29" font-family="'Barlow Condensed', sans-serif" font-weight="700" font-size="19"
+      text-anchor="middle" fill="#eef2f7" letter-spacing="0.5">O<tspan fill="#f5c451">L</tspan></text>
+    <path d="M13 33 Q22 37 31 33" stroke="#ff4d3d" stroke-width="1.6" fill="none" stroke-linecap="round"/>
+  </svg>`;
+}
+
 // ESPN's API uses a few abbreviations that differ from this app's own team list
 // (e.g. Washington is "WSH" in ESPN's data but "WAS" everywhere in this app).
 // EVERY read of a team abbreviation from an ESPN response must go through this,
@@ -1659,7 +1672,7 @@ async function renderBoard(wk, headerHtml) {
         .map(p => `<span class="ol-chip">${TEAM_NAME[p.team_abbr] || p.team_abbr} <b>${p.score}</b></span>`).join("");
       olHtml = `
         <div class="ol-reveal">
-          <div class="ol-head">🤖 <b>Only Losses</b> picked this week</div>
+          <div class="ol-head">${olBadgeSvg(22)} <b>Only Losses</b> picked this week</div>
           <div class="ol-chips">${chips}</div>
           <p class="ol-note">Picks are weighted toward higher Best Loser scores — not guaranteed — and get
             sharper over the season as real results calibrate the model. If Only Losses beats all three of you
@@ -2497,7 +2510,7 @@ async function renderStandings() {
   const olTallyData = await computeOnlyLossesTally(reqByWeek);
   weekly["only_losses"] = olTallyData.weekly;
   const olEntry = {
-    id: "only_losses", name: "🤖 Only Losses", ...olTallyData.tally,
+    id: "only_losses", name: `${olBadgeSvg(18)} Only Losses`, ...olTallyData.tally,
     total: olTallyData.tally.correct + olTallyData.tally.incorrect,
     pct: (olTallyData.tally.correct + olTallyData.tally.incorrect)
        ? olTallyData.tally.correct / (olTallyData.tally.correct + olTallyData.tally.incorrect) : 0,
@@ -2699,7 +2712,7 @@ async function renderStandings() {
       </div>
       <p class="field-note">The pot fills $${WEEKLY_ANTE} each week from whoever had the <b>worst</b> record
         (confidence, then a rotating "possession arrow" that protects one player's tiebreak each week, breaks
-        ties), every 💀 penalty tile peeled, and $5/player any week <b>🤖 Only Losses</b> sweeps all three of you.
+        ties), every 💀 penalty tile peeled, and $5/player any week ${olBadgeSvg(15)} <b>Only Losses</b> sweeps all three of you.
         At season's end the whole pot is <b>winner-take-all</b> to whoever won the <b>most weekly wins</b> —
         ties broken by overall season record, then total confidence.</p>
     </div>`;
@@ -2761,13 +2774,13 @@ async function renderStandings() {
       const perPlayer = PLAYERS.map(p => `${nameOf2(p.id)} ${r.player_correct?.[p.id] ?? "—"}`).join(" · ");
       return `<div class="st-row" style="grid-template-columns:70px 1fr 90px">
         <div class="st-name">Wk ${r.week_number}</div>
-        <div style="font-size:13px;color:var(--ink-dim)">🤖 ${r.ol_correct} correct — ${perPlayer}</div>
+        <div style="font-size:13px;color:var(--ink-dim)">${olBadgeSvg(15)} ${r.ol_correct} correct — ${perPlayer}</div>
         <div class="st-val ${r.swept ? "acc-off" : ""}">${r.swept ? "SWEPT 💀" : "safe"}</div>
       </div>`;
     }).join("");
     olSeasonHtml = `
       <div class="st-weekly">
-        <div class="st-section-title">🤖 Only Losses — season record</div>
+        <div class="st-section-title">${olBadgeSvg(16)} Only Losses — season record</div>
         ${olResults.length ? `
           <div class="standings-table">
             <div class="st-head" style="grid-template-columns:70px 1fr 90px">
@@ -3101,6 +3114,24 @@ async function commishTools(overlay) {
     </div>
 
     <div class="modal-section">
+      <h3>Test the peel mechanic</h3>
+      <p>Peels one random tile for real — same code path players use (image reveal, tap, money popup) — so you
+        can confirm it's actually working. Logged under "Week 0" so it's easy to spot. <b>Reshuffle below when
+        you're done</b> to clear it out before real play.</p>
+      <div class="modal-actions" style="justify-content:flex-start">
+        <button class="btn btn-ghost" id="testpeel">🧪 Test peel a tile</button>
+      </div>
+      <span class="msg" id="testpeelmsg"></span>
+      <p style="margin-top:14px">Once you've confirmed it works (or want a clean board), reshuffle to wipe
+        <b>all</b> peels — test and real — and re-roll the tile board fresh. Best used before real peeling
+        starts for the season; doesn't touch picks, entries, or standings.</p>
+      <div class="modal-actions" style="justify-content:flex-start">
+        <button class="btn btn-danger" id="reshufflepeels">🔄 Reshuffle peel board</button>
+      </div>
+      <span class="msg" id="reshufflemsg"></span>
+    </div>
+
+    <div class="modal-section">
       <h3>Reset a player's password</h3>
       <p>Clears a player's password so they can sign in freely and set a new one. Use if someone gets locked out.</p>
       <div class="pw-reset-row">
@@ -3123,7 +3154,68 @@ async function commishTools(overlay) {
       <span class="msg" id="resetmsg"></span>
     </div>`;
 
-  // password reset
+  // test peel — a real peel (image/tap/money code path) logged under week 0 so it's obviously a test
+  modal.querySelector("#testpeel").onclick = async () => {
+    const msg = modal.querySelector("#testpeelmsg");
+    msg.className = "msg"; msg.textContent = "Peeling…";
+    try {
+      let tileValues = await sbGet(`tile_values?order=tile_index.asc`) || [];
+      if (!tileValues.length) {
+        const gen = generateTileValues();
+        await sb("tile_values", { method: "POST", body: JSON.stringify(gen) });
+        tileValues = gen;
+      }
+      const existingPeels = await sbGet(`peels?order=tile_index.asc`) || [];
+      const peeledSet = new Set(existingPeels.map(p => p.tile_index));
+      const unpeeled = tileValues.filter(t => !peeledSet.has(t.tile_index));
+      if (!unpeeled.length) {
+        msg.className = "msg err"; msg.textContent = "Every tile's already peeled — reshuffle first.";
+        return;
+      }
+      const tile = unpeeled[Math.floor(Math.random() * unpeeled.length)];
+      const type = tile.type || "money";
+      const base = Number(tile.amount) || 0;
+      let effective = 0, potContribution = 0;
+      if (type === "money" || type === "jackpot") effective = base;
+      else if (type === "negative" || type === "pot") potContribution = base;
+      // multiplier: effective=0, nothing further to test money-wise
+
+      await sb("peels", {
+        method: "POST",
+        body: JSON.stringify({ tile_index: tile.tile_index, week_number: 0, player_id: ME, effective }),
+      });
+      if (potContribution > 0) {
+        await sb("pot_ledger", {
+          method: "POST",
+          body: JSON.stringify({ player_id: ME, amount: potContribution, week_number: 0, reason: type === "negative" ? "penalty tile" : "pot tile" }),
+        }).catch(() => {});
+      }
+
+      const resultTxt = type === "multiplier" ? "×2 multiplier revealed"
+        : type === "jackpot" ? `💰 JACKPOT $${effective.toFixed(2)} each`
+        : (type === "negative" || type === "pot") ? `💀 $${potContribution.toFixed(2)} to the pot`
+        : `$${effective.toFixed(2)} from each`;
+      msg.className = "msg ok";
+      msg.textContent = `Peeled tile ${tile.tile_index + 1}: ${resultTxt}. Check the Weekly Award tab to see the image reveal.`;
+    } catch (e) {
+      msg.className = "msg err"; msg.textContent = "Test peel failed: " + e.message;
+    }
+  };
+
+  // reshuffle — clears ALL peels (test + real) and re-rolls tile_values fresh
+  modal.querySelector("#reshufflepeels").onclick = async () => {
+    const msg = modal.querySelector("#reshufflemsg");
+    if (!confirm("Clear ALL peels (including any real ones this season) and reshuffle the tile board? This can't be undone.")) return;
+    try {
+      await sb(`peels?id=gte.0`, { method: "DELETE" });
+      await sb(`tile_values?id=gte.0`, { method: "DELETE" });
+      msg.className = "msg ok"; msg.textContent = "Peel board cleared and will reshuffle next time it's opened.";
+    } catch (e) {
+      msg.className = "msg err"; msg.textContent = "Reshuffle failed: " + e.message;
+    }
+  };
+
+
   modal.querySelector("#pwresetbtn").onclick = async () => {
     const msg = modal.querySelector("#pwresetmsg");
     const pid = modal.querySelector("#pwresetsel").value;
