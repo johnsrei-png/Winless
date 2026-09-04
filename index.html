@@ -858,6 +858,7 @@
     border-radius: 14px; padding: 16px 18px; margin-bottom: 16px;
   }
   .ol-head { font-family: 'Barlow Semi Condensed', sans-serif; font-weight: 700; font-size: 15px; margin-bottom: 10px; }
+  .ol-talk { font-style: italic; color: var(--ink-dim); font-size: 13px; margin: 0 0 12px; }
   .ol-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
   .ol-chip {
     background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
@@ -1839,13 +1840,17 @@ async function renderBoard(wk, headerHtml) {
   // picks are already locked by this point.
   let olHtml = "";
   try {
-    const olPicks = await ensureOnlyLossesPicks(wk);
+    const [olPicks, trashTalk] = await Promise.all([
+      ensureOnlyLossesPicks(wk),
+      onlyLossesTrashTalk(),
+    ]);
     if (olPicks && olPicks.length) {
       const chips = olPicks.slice().sort((a, b) => b.score - a.score)
         .map(p => `<span class="ol-chip">${TEAM_NAME[p.team_abbr] || p.team_abbr} <b>${p.score}</b></span>`).join("");
       olHtml = `
         <div class="ol-reveal">
           <div class="ol-head">${olBadgeSvg(22)} <b>Only Losses</b> picked this week</div>
+          <p class="ol-talk">"${trashTalk}"</p>
           <div class="ol-chips">${chips}</div>
           <p class="ol-note">Picks are weighted toward higher Best Loser scores — not guaranteed — and get
             sharper over the season as real results calibrate the model. If Only Losses beats all three of you
@@ -2505,6 +2510,80 @@ function calibrateScore(rawScore, buckets) {
   return rawScore * (1 - trust) + corrected * trust;
 }
 
+// ------------------------------------------------------------
+// Standings-aware variance: is Only Losses currently ahead of or behind the
+// best human on weekly wins? This is the same logic a trailing sports team
+// uses late in a game — behind needs MORE variance (a safe, average week
+// won't close the gap, only a spiky one will); ahead wants LESS variance
+// (protect the lead by leaning hard into its best-scored picks). "sharpness"
+// below is an exponent applied to each team's weight before sampling:
+// >1 leans harder into top scores (lower variance), <1 flattens the field
+// toward more random picks (higher variance).
+// ------------------------------------------------------------
+async function onlyLossesSharpness() {
+  try {
+    const [olResults, pot] = await Promise.all([
+      sbGet(`only_losses_results?order=week_number.asc`).catch(() => []),
+      computePot().catch(() => null),
+    ]);
+    let olWins = 0;
+    (olResults || []).forEach(r => {
+      const maxPlayer = Math.max(0, ...Object.values(r.player_correct || {}));
+      if (r.ol_correct > maxPlayer) olWins++;
+    });
+    const bestHumanWins = pot ? Math.max(0, ...Object.values(pot.weeklyWins || {})) : 0;
+    if (olWins > bestHumanWins) return 1.6;   // ahead — play safer, protect the lead
+    if (olWins < bestHumanWins) return 0.6;   // behind — play looser, chase variance
+    return 1.0;                                // even — neutral
+  } catch (e) { return 1.0; }
+}
+
+function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
+// A rotating flavor line based on Only Losses' actual recent record — pure
+// personality, doesn't touch how it picks. Streaks are read from the last
+// few resolved weeks of only_losses_results.
+async function onlyLossesTrashTalk() {
+  try {
+    const results = await sbGet(`only_losses_results?order=week_number.asc`) || [];
+    if (!results.length) {
+      return pick(["First week out — let's see what the model's got.", "New to the table. Deal me in."]);
+    }
+    const recent = results.slice(-3);   // last up-to-3 resolved weeks
+    const sweptRecent = recent.filter(r => r.swept).length;
+    const wonRecent = recent.filter(r => {
+      const maxPlayer = Math.max(0, ...Object.values(r.player_correct || {}));
+      return r.ol_correct > maxPlayer;
+    }).length;
+    const totalSweeps = results.filter(r => r.swept).length;
+
+    if (sweptRecent >= 2) return pick([
+      "Two sweeps and counting. Anyone want to actually compete?",
+      "This is starting to feel unfair. For you.",
+      "The model isn't gambling anymore — it's just winning.",
+    ]);
+    if (wonRecent >= 2 && sweptRecent === 0) return pick([
+      "On a bit of a heater lately. Not mad about it.",
+      "Riding a nice little streak here.",
+    ]);
+    if (recent.every(r => {
+      const maxPlayer = Math.max(0, ...Object.values(r.player_correct || {}));
+      return r.ol_correct <= maxPlayer;
+    })) return pick([
+      "Rough stretch. The algorithm has feelings, probably.",
+      "Cold streak. Even the model has bad weeks.",
+      "Not my finest run — but the calibration's still learning.",
+    ]);
+    if (totalSweeps > 0) return pick([
+      `${totalSweeps} sweep${totalSweeps !== 1 ? "s" : ""} on the season so far. Respect the process.`,
+    ]);
+    return pick([
+      "Every week's a fresh shot. Let's see how this goes.",
+      "No promises, just probabilities.",
+    ]);
+  } catch (e) { return "Every week's a fresh shot."; }
+}
+
 // Generate (once) and store Only Losses' picks for a week, at lock time —
 // using live scores + the same team-eligibility rules the players have.
 async function ensureOnlyLossesPicks(wk) {
@@ -2512,11 +2591,12 @@ async function ensureOnlyLossesPicks(wk) {
     const existing = await sbGet(`only_losses_picks?week_number=eq.${wk.week_number}`);
     if (existing && existing.length) return existing;   // already generated for this week
 
-    const [teams, entries, allAssigns, accResolved] = await Promise.all([
+    const [teams, entries, allAssigns, accResolved, sharpness] = await Promise.all([
       computeBestLoserScores(wk.week_number).catch(() => []),
       sbGet(`entries?order=id.asc`).catch(() => []),
       sbGet(`assignments?order=week_number.asc`).catch(() => []),
       computeAccuracy().catch(() => []),   // this season's real predicted-vs-actual data
+      onlyLossesSharpness(),               // ahead/behind the humans -> lower/higher variance
     ]);
     if (!teams.length) return [];
     const calibBuckets = bucketAccuracy(accResolved);
@@ -2530,7 +2610,18 @@ async function ensureOnlyLossesPicks(wk) {
       if (!liveEntryIds.length) return true;
       const used = usedByAll[t.ab] || new Set();
       return !liveEntryIds.every(id => used.has(id));
-    }).map(t => ({ ...t, calibratedWeight: calibrateScore(t.score, calibBuckets) }));
+    }).map(t => {
+      const calibrated = calibrateScore(t.score, calibBuckets);
+      // line-movement nudge: a positive lineMovement means the market has moved
+      // toward this team losing MORE since the opening line — weight up a touch
+      // (capped small; this is a live experiment, not a trusted strong signal yet).
+      const moveBoost = Math.max(-8, Math.min(8, (t.lineMovement || 0) * 2));
+      const withMove = Math.max(2, Math.min(98, calibrated + moveBoost));
+      // apply standings-aware sharpness as an exponent (relative to a 50 midpoint
+      // so it bends the curve rather than just scaling it)
+      const sharpened = 50 * Math.pow(withMove / 50, sharpness);
+      return { ...t, calibratedWeight: Math.max(2, Math.min(98, sharpened)) };
+    });
 
     const picked = weightedPickTeams(eligibleTeams, wk.picks_required);
     if (!picked.length) return [];
@@ -4456,11 +4547,17 @@ async function computeBestLoserScores(week) {
 
           lossProb = Math.max(0.02, Math.min(0.98, lossProb));
 
+          // raw line movement (positive = moved toward this team losing more since the
+          // opening line) — exposed as data, not just display text, so Only Losses can
+          // weight toward it without changing the human-facing score.
+          const lineMovement = (con && con.openingSpread != null && con.spread != null)
+            ? (con.spread - con.openingSpread) : 0;
+
           teams.push({
             ab, name: t.team?.shortDisplayName || ab,
             oppAb: espnAbbr(opp.team?.abbreviation), oppName: opp.team?.shortDisplayName || opp.team?.abbreviation,
             side, teamSpread, when, date: dt ? dt.getTime() : 0,
-            score: Math.round(lossProb * 100), steps,
+            score: Math.round(lossProb * 100), steps, lineMovement,
             hasConsensus: !!(con && con.ml != null),
           });
         });
