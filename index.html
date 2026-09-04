@@ -1621,10 +1621,10 @@ async function renderWeek() {
 
     app.innerHTML = headerHtml + `
       <div class="locked-card">
-        <div class="locked-badge">✓ Picks locked in</div>
+        <div class="locked-badge">✓ Picks cocked in</div>
         <div class="locked-sub">Your list is submitted for Week ${wk.week_number}.${allIn
           ? " All three are in — lock the week below to reveal the master ranking."
-          : " Waiting on the rest of the crew before the week can be locked."}</div>
+          : " Waiting on the rest of the crew before the week can be cocked."}</div>
         <div class="locked-list">${listHtml}</div>
         <div class="locked-actions">
           <button class="btn btn-ghost" id="editpicks">Unlock &amp; edit my list</button>
@@ -1679,7 +1679,7 @@ async function renderWeek() {
         ${allIn ? `
           <div class="lockbar">
             <div class="lbltxt"><b>All three lists are in.</b> Lock the week to reveal the master
-              ranking and start placing entries. Once locked, picks are final.</div>
+              ranking and start placing entries. Once cocked, picks are final.</div>
             <button class="btn btn-lock" id="lockweek">Lock week &amp; reveal</button>
           </div>` : ""}
 
