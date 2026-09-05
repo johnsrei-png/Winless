@@ -4929,19 +4929,32 @@ function renderDragPickPrototype(wk, teams) {
         const fromSlot = tile.closest(".dnd-slot") ? +tile.closest(".dnd-slot").dataset.slot : null;
         const startX = e.clientX, startY = e.clientY;
         const rect = tile.getBoundingClientRect();
+        let moved = false;
+        const DRAG_THRESHOLD = 6;   // px of movement before this counts as a drag, not a tap
         tile.setPointerCapture(e.pointerId);
-        tile.classList.add("dragging");
-        tile.style.width = rect.width + "px";
 
         const move = (ev) => {
-          tile.style.transform = `translate(${ev.clientX - startX}px, ${ev.clientY - startY}px)`;
+          const dx = ev.clientX - startX, dy = ev.clientY - startY;
+          if (!moved && Math.hypot(dx, dy) > DRAG_THRESHOLD) {
+            moved = true;
+            tile.classList.add("dragging");
+            tile.style.width = rect.width + "px";
+          }
+          if (moved) tile.style.transform = `translate(${dx}px, ${dy}px)`;
         };
         const up = (ev) => {
-          tile.classList.remove("dragging");
-          tile.style.transform = ""; tile.style.width = "";
           tile.removeEventListener("pointermove", move);
           tile.removeEventListener("pointerup", up);
           try { tile.releasePointerCapture(ev.pointerId); } catch (err) {}
+
+          // a tap (no real movement) opens the loser-score breakdown instead of dropping
+          if (!moved) {
+            showScoreBreakdown(findTeam(ab));
+            return;
+          }
+
+          tile.classList.remove("dragging");
+          tile.style.transform = ""; tile.style.width = "";
 
           tile.style.pointerEvents = "none";
           const el = document.elementFromPoint(ev.clientX, ev.clientY);
@@ -4979,6 +4992,34 @@ function renderDragPickPrototype(wk, teams) {
         tile.addEventListener("pointerup", up);
       };
     });
+  }
+
+  // Tap-to-expand: reuses the exact same per-team `steps` breakdown the real
+  // Best Losers panel computes — same math, shown here as a modal instead of
+  // an inline expand (tiles are too small/dense in this grid for that).
+  function showScoreBreakdown(t) {
+    if (!t) return;
+    const overlay = document.createElement("div");
+    overlay.className = "modal-overlay";
+    const scoreColor2 = t.score >= 65 ? "var(--live)" : t.score >= 50 ? "var(--gold)" : "var(--ink-faint)";
+    overlay.innerHTML = `
+      <div class="modal">
+        <h2 style="display:flex;align-items:center;gap:12px">
+          <span style="font-family:'Barlow Condensed',sans-serif;font-size:36px;color:${scoreColor2}">${t.score}</span>
+          ${t.name}
+        </h2>
+        <p style="margin-top:-8px">${t.side === "away" ? "@" : "vs"} ${t.oppName} · ${t.when}</p>
+        <div class="bl-detail open" style="display:block;padding:0">
+          ${(t.steps || []).map(s => `<div class="bl-step"><span>${s.label}</span><span class="bl-step-v">${s.val}</span></div>`).join("")}
+          <div class="bl-step bl-step-total"><span><b>Loser score</b></span><span class="bl-step-v"><b>${t.score}</b></span></div>
+        </div>
+        <div class="modal-actions">
+          <button class="btn btn-ghost" id="closebreakdown">Close</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+    overlay.querySelector("#closebreakdown").onclick = () => overlay.remove();
   }
 
   app.innerHTML = `
