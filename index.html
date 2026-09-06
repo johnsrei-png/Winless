@@ -893,6 +893,9 @@
   .dnd-tile.compact .dnd-name {
     font-size: 11px; white-space: normal; overflow: visible; text-overflow: clip; line-height: 1.2;
   }
+  .dnd-tile.compact .dnd-meta {
+    font-size: 9px; white-space: normal; line-height: 1.3; margin-top: 1px;
+  }
   .dnd-tile.dragging {
     cursor: grabbing; z-index: 20; box-shadow: 0 10px 24px rgba(0,0,0,0.5); border-color: var(--gold);
   }
@@ -5022,16 +5025,14 @@ function renderDragPickPrototype(wk, teams) {
   const spreadTxt = (t) => t.teamSpread == null ? "—"
     : t.teamSpread > 0 ? `+${t.teamSpread} dog` : t.teamSpread < 0 ? `${t.teamSpread} fav` : "PK";
 
-  // slot tiles keep the matchup subtext (useful once placed); pool tiles are
-  // deliberately compact — just score + name — since the full detail now
-  // lives in the stats table below instead of being repeated on every tile.
+  // every tile now shows matchup + spread, not just placed ones — compact
+  // pool tiles just render it smaller (see .dnd-tile.compact .dnd-meta)
   function tileHtml(t, extra = "") {
-    const compact = extra.includes("compact");
     return `<div class="dnd-tile ${extra}" data-ab="${t.ab}">
       <div class="dnd-score" style="color:${scoreColor(t.score)}">${t.score}</div>
       <div class="dnd-teaminfo">
         <div class="dnd-name">${t.name}</div>
-        ${compact ? "" : `<div class="dnd-meta">${t.side === "away" ? "@" : "vs"} ${t.oppName}</div>`}
+        <div class="dnd-meta">${t.side === "away" ? "@" : "vs"} ${t.oppName} · ${spreadTxt(t)}</div>
       </div>
     </div>`;
   }
