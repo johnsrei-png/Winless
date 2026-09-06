@@ -975,7 +975,8 @@
   /* ---- Sportsbook (DraftKings/FanDuel genre) ---- */
   .sb-wrap { display: grid; grid-template-columns: 1fr 280px; gap: 18px; align-items: start; background: #0D0F12; padding: 18px; border-radius: 8px; }
   @media (max-width: 700px) { .sb-wrap { grid-template-columns: 1fr; } }
-  .sb-section-head { font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-size: 20px; color: #EDEFF2; margin-bottom: 14px; }
+  .sb-wrap { --sb-display-font: 'Barlow Condensed', sans-serif; }
+  .sb-section-head { font-family: var(--sb-display-font); font-weight: 700; font-size: 20px; color: #EDEFF2; margin-bottom: 14px; }
   .sb-games { display: flex; flex-direction: column; gap: 8px; max-height: 74vh; overflow-y: auto; }
   .sb-game {
     display: flex; align-items: center; justify-content: space-between; gap: 14px;
@@ -992,11 +993,11 @@
   }
   .sb-odds-btn:hover { border-color: #53D337; }
   .sb-odds-btn.sb-odds-selected { background: #1B3311; border-color: #53D337; }
-  .sb-odds-score { font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-size: 22px; color: #53D337; line-height: 1; }
+  .sb-odds-score { font-family: var(--sb-display-font); font-weight: 700; font-size: 22px; color: #53D337; line-height: 1; }
   .sb-odds-lbl { font-size: 9px; color: #7A8088; text-transform: uppercase; letter-spacing: 0.05em; }
   .sb-slip { background: #16191E; border: 1px solid #262B33; border-radius: 8px; padding: 16px; position: sticky; top: 16px; }
   .sb-slip-head {
-    display: flex; justify-content: space-between; font-family: 'Barlow Semi Condensed', sans-serif;
+    display: flex; justify-content: space-between; font-family: var(--sb-display-font);
     font-weight: 700; font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: #EDEFF2;
     padding-bottom: 10px; border-bottom: 1px solid #262B33; margin-bottom: 10px;
   }
@@ -1023,7 +1024,7 @@
   .sb-slip-remove:hover { color: #FF4D4D; }
   .sb-slip-btn {
     width: 100%; background: #53D337; color: #0D0F12; border: none; padding: 13px; margin-top: 12px;
-    font-family: 'Barlow Semi Condensed', sans-serif; font-weight: 700; font-size: 14px; letter-spacing: 0.03em;
+    font-family: var(--sb-display-font); font-weight: 700; font-size: 14px; letter-spacing: 0.03em;
     border-radius: 6px; cursor: pointer;
   }
   .sb-slip-btn:disabled { background: #2E3540; color: #6B7178; cursor: default; }
@@ -5165,11 +5166,26 @@ async function renderSportsbookStyle() {
       </button>
     </div>`).join("");
 
+  const FONT_OPTIONS = [
+    { label: "Barlow Condensed (current)", family: "'Barlow Condensed', sans-serif" },
+    { label: "Oswald", family: "'Oswald', sans-serif", google: "Oswald:wght@600;700" },
+    { label: "Bebas Neue", family: "'Bebas Neue', sans-serif", google: "Bebas+Neue" },
+    { label: "Teko", family: "'Teko', sans-serif", google: "Teko:wght@600;700" },
+    { label: "Archivo Black", family: "'Archivo Black', sans-serif", google: "Archivo+Black" },
+    { label: "IBM Plex Mono", family: "'IBM Plex Mono', monospace", google: "IBM+Plex+Mono:wght@600;700" },
+  ];
+
   body.innerHTML = `
-    <p class="hint" style="margin-bottom:20px">DraftKings/FanDuel genre: dark by default, one vivid brand color,
+    <p class="hint" style="margin-bottom:14px">DraftKings/FanDuel genre: dark by default, one vivid brand color,
       odds as tappable badges, and a persistent pick slip. Tap a team's name for its loser-score math; tap the
       badge to add it to your slip, then <b>drag slip items to reorder</b> — order sets confidence points.</p>
-    <div class="sb-wrap">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:18px">
+      <label style="font-size:12px;color:var(--ink-dim)">Display font (scores, headers, button):</label>
+      <select class="wksel" id="sbFontSelect">
+        ${FONT_OPTIONS.map((f, i) => `<option value="${i}">${f.label}</option>`).join("")}
+      </select>
+    </div>
+    <div class="sb-wrap" id="sbWrap">
       <div class="sb-main">
         <div class="sb-section-head">Week ${wk.week_number} — Best Losers</div>
         <div class="sb-games">${rows}</div>
@@ -5182,6 +5198,19 @@ async function renderSportsbookStyle() {
         <button class="sb-slip-btn" id="sbSlipSubmit" disabled>Submit picks</button>
       </div>
     </div>`;
+
+  const loadedFonts = new Set();
+  document.getElementById("sbFontSelect").onchange = (e) => {
+    const f = FONT_OPTIONS[+e.target.value];
+    if (f.google && !loadedFonts.has(f.google)) {
+      loadedFonts.add(f.google);
+      const link = document.createElement("link");
+      link.rel = "stylesheet";
+      link.href = `https://fonts.googleapis.com/css2?family=${f.google}&display=swap`;
+      document.head.appendChild(link);
+    }
+    document.getElementById("sbWrap").style.setProperty("--sb-display-font", f.family);
+  };
 
   function showBreakdown(t) {
     const overlay = document.createElement("div");
