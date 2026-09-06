@@ -904,103 +904,69 @@
   .dnd-name { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
   /* ============================================================
-     STYLE GALLERY — sandbox only. Three fully self-contained design
-     directions, each scoped under .style-preview-a/b/c so nothing here
-     touches the live app's actual classes or variables.
+     STYLE GALLERY — sandbox only. Grounded in an actual sports-data-site
+     composition (scores ticker + dense standings table), not a generic
+     card-with-a-number. Scoped under .sw-* so nothing touches the live app.
+     Light/dark share one set of rules, switching via [data-mode] variables.
   ============================================================ */
-  .style-gallery { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 22px; }
-  .style-preview { border-radius: 4px; overflow: hidden; }
+  .sw-toggle-row { display: flex; gap: 8px; margin-bottom: 16px; max-width: 200px; }
+  .sw-preview {
+    border-radius: 3px; overflow: hidden; border: 1px solid var(--sw-line);
+    transition: background .15s, color .15s;
+  }
+  .sw-preview[data-mode="light"] {
+    --sw-bg: #FFFFFF; --sw-ink: #12151A; --sw-label: #6B7280; --sw-line: #E3E5E8;
+    --sw-stripe: #F7F8F9; --sw-accent: #D0102D; --sw-head-bg: #F3F4F5;
+  }
+  .sw-preview[data-mode="dark"] {
+    --sw-bg: #15171B; --sw-ink: #EDEFF2; --sw-label: #9AA0A8; --sw-line: #2A2D33;
+    --sw-stripe: #1B1E23; --sw-accent: #FF3B4E; --sw-head-bg: #1B1E23;
+  }
+  .sw-preview { background: var(--sw-bg); color: var(--sw-ink); }
 
-  /* ---- A: Ledger (light, financial/stat-sheet) ---- */
-  .style-preview-a { background: #EFEDE7; padding: 18px; }
-  .p-a-label { font-family: 'Public Sans', sans-serif; font-size: 12px; color: #6B6558; margin-bottom: 10px; }
-  .p-a-card { background: #FCFCFA; border: 1px solid #DEDACE; padding: 22px 24px; }
-  .p-a-head {
-    font-family: 'Source Serif 4', serif; font-weight: 700; font-size: 19px; color: #14171A;
-    padding-bottom: 12px; border-bottom: 1px solid #DEDACE; margin-bottom: 16px;
+  .sw-ticker {
+    display: flex; overflow-x: auto; border-bottom: 2px solid var(--sw-accent);
+    background: var(--sw-head-bg);
   }
-  .p-a-score {
-    font-family: 'Source Serif 4', serif; font-weight: 700; font-size: 46px; color: #1F6F4A;
-    line-height: 1; margin-bottom: 18px;
+  .sw-ticker-item {
+    display: flex; align-items: baseline; gap: 8px; padding: 10px 16px;
+    border-right: 1px solid var(--sw-line); white-space: nowrap; flex-shrink: 0;
   }
-  .p-a-score span {
-    display: inline-block; font-family: 'Public Sans', sans-serif; font-weight: 500; font-size: 12px;
-    color: #6B6558; margin-left: 8px; vertical-align: middle;
+  .sw-ticker-team {
+    font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-size: 14px;
+    letter-spacing: 0.02em; color: var(--sw-ink);
   }
-  .p-a-table { margin-bottom: 20px; }
-  .p-a-row {
-    display: grid; grid-template-columns: 20px 1fr 60px 50px; gap: 10px; align-items: center;
-    padding: 9px 0; border-bottom: 1px solid #EAE7DF; font-family: 'Public Sans', sans-serif; font-size: 13px;
-  }
-  .p-a-row:last-child { border-bottom: none; }
-  .p-a-rank { color: #9A9384; font-weight: 600; }
-  .p-a-name { color: #14171A; font-weight: 500; }
-  .p-a-rec, .p-a-conf { font-variant-numeric: tabular-nums; color: #4A4638; text-align: right; }
-  .p-a-btn {
-    background: #14171A; color: #FCFCFA; border: none; padding: 11px 20px; font-family: 'Public Sans', sans-serif;
-    font-weight: 600; font-size: 13px; border-radius: 2px; cursor: pointer;
-  }
-
-  /* ---- B: Nightbook (dark, editorial, restrained brass) ---- */
-  .style-preview-b { background: #16140F; padding: 18px; }
-  .p-b-label { font-family: 'Inter', sans-serif; font-size: 12px; color: #7D7462; margin-bottom: 10px; }
-  .p-b-card { background: #221F1C; border: 1px solid #38332B; padding: 24px 26px; }
-  .p-b-head {
-    font-family: 'Fraunces', serif; font-weight: 600; font-size: 21px; color: #EDE8E2; margin-bottom: 18px;
-  }
-  .p-b-score {
-    font-family: 'Fraunces', serif; font-weight: 700; font-size: 48px; color: #B08D57;
-    line-height: 1; margin-bottom: 18px;
-  }
-  .p-b-score span {
-    display: inline-block; font-family: 'Inter', sans-serif; font-weight: 400; font-size: 12px;
-    color: #7D7462; margin-left: 8px; vertical-align: middle;
-  }
-  .p-b-table { margin-bottom: 22px; }
-  .p-b-row {
-    display: grid; grid-template-columns: 20px 1fr 60px 50px; gap: 10px; align-items: center;
-    padding: 10px 0; border-bottom: 1px solid #322D26; font-family: 'Inter', sans-serif; font-size: 13px;
-  }
-  .p-b-row:last-child { border-bottom: none; }
-  .p-b-rank { color: #6E6656; font-weight: 600; }
-  .p-b-name { color: #EDE8E2; font-weight: 500; }
-  .p-b-rec, .p-b-conf { font-variant-numeric: tabular-nums; color: #A99E8B; text-align: right; }
-  .p-b-btn {
-    background: #B08D57; color: #1C1A16; border: none; padding: 11px 20px; font-family: 'Inter', sans-serif;
-    font-weight: 600; font-size: 13px; border-radius: 3px; cursor: pointer;
+  .sw-ticker-opp { font-family: 'Inter', sans-serif; font-size: 11px; color: var(--sw-label); }
+  .sw-ticker-score {
+    font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-size: 16px; color: var(--sw-accent);
   }
 
-  /* ---- C: Scoreboard Mono (light, monochrome + one accent, grid) ---- */
-  .style-preview-c { background: #EDEDED; padding: 18px; }
-  .p-c-label { font-family: 'Archivo', sans-serif; font-size: 12px; color: #767676; margin-bottom: 10px; }
-  .p-c-card { background: #FFFFFF; padding: 26px; }
-  .p-c-head {
-    font-family: 'Archivo', sans-serif; font-weight: 600; font-size: 18px; color: #0A0A0A; margin-bottom: 22px;
+  .sw-body { padding: 20px 22px; }
+  .sw-section-head {
+    font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-size: 20px;
+    letter-spacing: 0.01em; margin-bottom: 14px; color: var(--sw-ink);
   }
-  .p-c-score {
-    font-family: 'IBM Plex Mono', monospace; font-weight: 700; font-size: 44px; color: #0A0A0A;
-    line-height: 1; margin-bottom: 22px; letter-spacing: -0.02em;
+  .sw-table { width: 100%; border-collapse: collapse; font-family: 'Inter', sans-serif; font-size: 13px; }
+  .sw-table th {
+    text-align: left; font-size: 10px; font-weight: 700; color: var(--sw-label);
+    padding: 7px 10px; border-bottom: 2px solid var(--sw-ink); text-transform: uppercase; letter-spacing: 0.05em;
   }
-  .p-c-score span {
-    display: inline-block; font-family: 'Archivo', sans-serif; font-weight: 500; font-size: 11px;
-    color: #8A8A8A; margin-left: 10px; vertical-align: middle;
+  .sw-table td { padding: 8px 10px; border-bottom: 1px solid var(--sw-line); }
+  .sw-table tbody tr:nth-child(even) td { background: var(--sw-stripe); }
+  .sw-table th:not(:first-child), .sw-table .sw-num { text-align: right; }
+  .sw-num { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .sw-score-cell { color: var(--sw-accent); font-weight: 700; }
+
+  .sw-actions { display: flex; gap: 10px; margin-top: 18px; }
+  .sw-btn-primary {
+    background: var(--sw-accent); color: #fff; border: none; padding: 10px 18px;
+    font-family: 'Barlow Semi Condensed', sans-serif; font-weight: 700; font-size: 13px;
+    letter-spacing: 0.04em; border-radius: 2px; cursor: pointer;
   }
-  .p-c-table { margin-bottom: 24px; }
-  .p-c-row {
-    display: grid; grid-template-columns: 24px 1fr 64px 52px; gap: 14px; align-items: center;
-    padding: 12px 0; font-family: 'Archivo', sans-serif; font-size: 13px;
-  }
-  .p-c-rank {
-    font-family: 'IBM Plex Mono', monospace; color: #B0B0B0; font-weight: 600;
-  }
-  .p-c-name { color: #0A0A0A; font-weight: 500; }
-  .p-c-rec, .p-c-conf {
-    font-family: 'IBM Plex Mono', monospace; color: #0A0A0A; text-align: right; font-weight: 600;
-  }
-  .p-c-btn {
-    background: #0A0A0A; color: #FFFFFF; border: none; padding: 12px 20px;
-    font-family: 'IBM Plex Mono', monospace; font-weight: 700; font-size: 12px;
-    letter-spacing: 0.08em; text-transform: uppercase; cursor: pointer;
+  .sw-btn-ghost {
+    background: transparent; color: var(--sw-ink); border: 1px solid var(--sw-line); padding: 10px 18px;
+    font-family: 'Barlow Semi Condensed', sans-serif; font-weight: 600; font-size: 13px;
+    border-radius: 2px; cursor: pointer;
   }
 
   .dnd-meta { font-size: 11px; color: var(--ink-faint); }
@@ -4966,76 +4932,82 @@ async function renderTest() {
 }
 
 // ------------------------------------------------------------
-// Visual style gallery — three genuinely different design directions,
-// grounded in what this app actually is (a friend-group pool tracking real
-// money and stats), not just re-colored copies of the current look. Fully
-// scoped to .style-preview-* classes so nothing here touches the live app.
+// Visual style gallery — grounded in an actual sports-data-site composition
+// (a scores ticker + dense standings table), reusing fonts the app already
+// loads. Fully scoped to .sw-* classes so nothing here touches the live app.
 // ------------------------------------------------------------
-function injectPreviewFonts() {
-  if (window._previewFontsLoaded) return;
-  window._previewFontsLoaded = true;
-  const link = document.createElement("link");
-  link.rel = "stylesheet";
-  link.href = "https://fonts.googleapis.com/css2?family=Source+Serif+4:wght@600;700&family=Public+Sans:wght@400;500;600&family=Fraunces:opsz,wght@40,600;40,700&family=IBM+Plex+Mono:wght@600;700&family=Archivo:wght@500;600&display=swap";
-  document.head.appendChild(link);
-}
-
 function renderStyleGallery() {
-  injectPreviewFonts();
+  // deliberately no extra font loading here — Barlow Condensed + Inter (already
+  // loaded by the app) are exactly the right register for this: a real sports
+  // data site wouldn't pull in five decorative typefaces either.
   const body = document.getElementById("sandboxbody");
   if (!body) return;
 
-  const sampleRows = [
-    { rank: 1, name: "Reid", record: "24-9", conf: 184 },
-    { rank: 2, name: "🤖 Only Losses", record: "22-11", conf: 171 },
-    { rank: 3, name: "Tyler", record: "19-14", conf: 152 },
+  // grounded in real sports-data-site composition: a scores ticker strip +
+  // a dense standings table — not a card with a floating hero number, which
+  // is itself the generic pattern regardless of color/font dressed on it.
+  const ticker = [
+    { ab: "BUF", opp: "@ NYJ", score: 87 }, { ab: "SF", opp: "vs LAR", score: 74 },
+    { ab: "KC", opp: "@ DEN", score: 61 }, { ab: "PHI", opp: "vs DAL", score: 58 },
+    { ab: "MIA", opp: "@ NE", score: 44 }, { ab: "GB", opp: "vs CHI", score: 39 },
   ];
-  const rowsOf = (cls) => sampleRows.map(r => `
-    <div class="${cls}-row">
-      <span class="${cls}-rank">${r.rank}</span>
-      <span class="${cls}-name">${r.name}</span>
-      <span class="${cls}-rec">${r.record}</span>
-      <span class="${cls}-conf">${r.conf}</span>
+  const standings = [
+    { rank: 1, name: "Reid", record: "24-9", pct: ".727", conf: 184 },
+    { rank: 2, name: "🤖 Only Losses", record: "22-11", pct: ".667", conf: 171 },
+    { rank: 3, name: "Tyler", record: "19-14", pct: ".576", conf: 152 },
+    { rank: 4, name: "Kurt", record: "17-16", pct: ".515", conf: 140 },
+  ];
+
+  const tickerHtml = ticker.map(g => `
+    <div class="sw-ticker-item">
+      <span class="sw-ticker-team">${g.ab}</span>
+      <span class="sw-ticker-opp">${g.opp}</span>
+      <span class="sw-ticker-score">${g.score}</span>
     </div>`).join("");
 
+  const rowsHtml = standings.map(r => `
+    <tr>
+      <td class="sw-num">${r.rank}</td>
+      <td>${r.name}</td>
+      <td class="sw-num">${r.record}</td>
+      <td class="sw-num">${r.pct}</td>
+      <td class="sw-num sw-score-cell">${r.conf}</td>
+    </tr>`).join("");
+
   body.innerHTML = `
-    <p class="hint" style="margin-bottom:20px">Three directions built from what this app actually is — a
-      friend-group pool tracking real stats and money — not just re-colored versions of the current look.
-      Same content (a standings snippet, a score, a button) in each, so you can compare directly.</p>
+    <p class="hint" style="margin-bottom:20px">Grounded in an actual sports-data-site composition — a live scores
+      ticker and a dense standings table — instead of a generic card-with-a-big-number. Toggle light/dark below;
+      everything else about the direction stays the same.</p>
 
-    <div class="style-gallery">
+    <div class="sw-toggle-row">
+      <button class="bl-sort active" id="swLight">Light</button>
+      <button class="bl-sort" id="swDark">Dark</button>
+    </div>
 
-      <div class="style-preview style-preview-a">
-        <div class="p-a-label">A — Ledger</div>
-        <div class="p-a-card">
-          <div class="p-a-head">Season Standings</div>
-          <div class="p-a-score">84<span>loser score</span></div>
-          <div class="p-a-table">${rowsOf("p-a")}</div>
-          <button class="p-a-btn">Lock week &amp; reveal</button>
+    <div class="sw-preview" id="swPreview" data-mode="light">
+      <div class="sw-ticker">${tickerHtml}</div>
+      <div class="sw-body">
+        <div class="sw-section-head">Season Standings</div>
+        <table class="sw-table">
+          <thead><tr><th>#</th><th>Player</th><th>Record</th><th>Pct</th><th>Conf</th></tr></thead>
+          <tbody>${rowsHtml}</tbody>
+        </table>
+        <div class="sw-actions">
+          <button class="sw-btn-primary">Lock week &amp; reveal</button>
+          <button class="sw-btn-ghost">Edit board</button>
         </div>
       </div>
-
-      <div class="style-preview style-preview-b">
-        <div class="p-b-label">B — Nightbook</div>
-        <div class="p-b-card">
-          <div class="p-b-head">Season Standings</div>
-          <div class="p-b-score">84<span>loser score</span></div>
-          <div class="p-b-table">${rowsOf("p-b")}</div>
-          <button class="p-b-btn">Lock week &amp; reveal</button>
-        </div>
-      </div>
-
-      <div class="style-preview style-preview-c">
-        <div class="p-c-label">C — Scoreboard Mono</div>
-        <div class="p-c-card">
-          <div class="p-c-head">Season Standings</div>
-          <div class="p-c-score">84<span>loser score</span></div>
-          <div class="p-c-table">${rowsOf("p-c")}</div>
-          <button class="p-c-btn">Lock week &amp; reveal</button>
-        </div>
-      </div>
-
     </div>`;
+
+  const preview = document.getElementById("swPreview");
+  document.getElementById("swLight").onclick = (e) => {
+    preview.dataset.mode = "light";
+    document.querySelectorAll(".sw-toggle-row .bl-sort").forEach(b => b.classList.toggle("active", b === e.target));
+  };
+  document.getElementById("swDark").onclick = (e) => {
+    preview.dataset.mode = "dark";
+    document.querySelectorAll(".sw-toggle-row .bl-sort").forEach(b => b.classList.toggle("active", b === e.target));
+  };
 }
 
 // Drag-and-drop pick experiment: teams as draggable score tiles, dragged into
