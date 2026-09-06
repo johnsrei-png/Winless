@@ -972,6 +972,107 @@
     border-radius: 2px; cursor: pointer;
   }
 
+  /* ---- Sportsbook (DraftKings/FanDuel genre) ---- */
+  .sb-wrap { display: grid; grid-template-columns: 1fr 280px; gap: 18px; align-items: start; background: #0D0F12; padding: 18px; border-radius: 8px; }
+  @media (max-width: 700px) { .sb-wrap { grid-template-columns: 1fr; } }
+  .sb-section-head { font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-size: 20px; color: #EDEFF2; margin-bottom: 14px; }
+  .sb-games { display: flex; flex-direction: column; gap: 8px; }
+  .sb-game {
+    display: flex; align-items: center; justify-content: space-between; gap: 14px;
+    background: #16191E; border: 1px solid #262B33; border-radius: 8px; padding: 12px 16px;
+  }
+  .sb-team-row { display: flex; justify-content: space-between; gap: 20px; font-size: 14px; color: #C9CDD3; padding: 3px 0; }
+  .sb-team-row.sb-home { color: #EDEFF2; font-weight: 600; }
+  .sb-spread { color: #8A9099; font-variant-numeric: tabular-nums; font-size: 12px; }
+  .sb-odds-btn {
+    background: #1E232B; border: 1px solid #2E3540; border-radius: 8px; padding: 10px 18px;
+    display: flex; flex-direction: column; align-items: center; gap: 2px; cursor: pointer;
+    transition: background .12s, border-color .12s; flex-shrink: 0;
+  }
+  .sb-odds-btn:hover { border-color: #53D337; }
+  .sb-odds-btn.sb-odds-selected { background: #1B3311; border-color: #53D337; }
+  .sb-odds-score { font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-size: 22px; color: #53D337; line-height: 1; }
+  .sb-odds-lbl { font-size: 9px; color: #7A8088; text-transform: uppercase; letter-spacing: 0.05em; }
+  .sb-slip { background: #16191E; border: 1px solid #262B33; border-radius: 8px; padding: 16px; position: sticky; top: 16px; }
+  .sb-slip-head {
+    display: flex; justify-content: space-between; font-family: 'Barlow Semi Condensed', sans-serif;
+    font-weight: 700; font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: #EDEFF2;
+    padding-bottom: 10px; border-bottom: 1px solid #262B33; margin-bottom: 10px;
+  }
+  .sb-slip-head span { color: #53D337; }
+  .sb-slip-empty { font-size: 12px; color: #7A8088; text-align: center; padding: 20px 10px; }
+  .sb-slip-item {
+    display: flex; align-items: center; gap: 10px; font-size: 13px; color: #C9CDD3; padding: 6px 0;
+    border-bottom: 1px solid #1F242B;
+  }
+  .sb-slip-item span {
+    background: #262B33; color: #EDEFF2; font-size: 11px; font-weight: 700; border-radius: 4px;
+    width: 18px; height: 18px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  }
+  .sb-slip-item b { margin-left: auto; color: #53D337; }
+  .sb-slip-btn {
+    width: 100%; background: #53D337; color: #0D0F12; border: none; padding: 13px; margin-top: 12px;
+    font-family: 'Barlow Semi Condensed', sans-serif; font-weight: 700; font-size: 14px; letter-spacing: 0.03em;
+    border-radius: 6px; cursor: pointer;
+  }
+  .sb-slip-btn:disabled { background: #2E3540; color: #6B7178; cursor: default; }
+
+  /* ---- Sleeper-style ---- */
+  .sl-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+  .sl-title { font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-size: 26px; }
+  .sl-pill {
+    background: rgba(0,206,184,0.15); color: #00CEB8; font-size: 12px; font-weight: 600;
+    padding: 6px 14px; border-radius: 20px;
+  }
+  .sl-carousel { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 10px; margin-bottom: 24px; }
+  .sl-card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px;
+    min-width: 168px; flex-shrink: 0; position: relative;
+  }
+  .sl-live-tag { font-size: 10px; font-weight: 700; color: #00CEB8; letter-spacing: 0.06em; margin-bottom: 10px; }
+  .sl-matchup { display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 14px; }
+  .sl-avatar {
+    width: 42px; height: 42px; border-radius: 50%; background: #00CEB8; color: #06201C;
+    display: flex; align-items: center; justify-content: center; font-family: 'Barlow Condensed', sans-serif;
+    font-weight: 700; font-size: 13px;
+  }
+  .sl-avatar-alt { background: #6C5CE7; color: #F1EEFF; }
+  .sl-vs { font-size: 11px; color: var(--ink-faint); }
+  .sl-score {
+    text-align: center; font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-size: 30px; color: #00CEB8;
+  }
+  .sl-score span { display: block; font-family: 'Inter', sans-serif; font-weight: 400; font-size: 10px; color: var(--ink-faint); }
+  .sl-standings { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px; }
+  .sl-section-head { font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-size: 18px; margin-bottom: 12px; }
+  .sl-standing-row {
+    display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 14px;
+  }
+  .sl-standing-row:last-child { border-bottom: none; }
+  .sl-rank {
+    background: #00CEB8; color: #06201C; width: 22px; height: 22px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 11px; flex-shrink: 0;
+  }
+  .sl-name { flex: 1; font-weight: 600; }
+  .sl-rec { color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+
+  /* ---- Money Terminal (Bloomberg/Robinhood genre) ---- */
+  .mt-panel { background: #000000; border: 1px solid #1A1A1A; border-radius: 6px; padding: 20px 22px; max-width: 460px; }
+  .mt-head {
+    font-family: 'IBM Plex Mono', 'Barlow Semi Condensed', monospace; font-size: 11px; font-weight: 700;
+    color: #6B6B6B; letter-spacing: 0.08em; margin-bottom: 8px;
+  }
+  .mt-pot { font-family: 'IBM Plex Mono', monospace; font-weight: 700; font-size: 38px; color: #E8E8E8; line-height: 1; }
+  .mt-sub { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #6B6B6B; margin-top: 6px; margin-bottom: 18px; }
+  .mt-divider { border-top: 1px solid #1A1A1A; margin: 16px 0; }
+  .mt-row {
+    display: flex; justify-content: space-between; align-items: center; padding: 7px 0;
+    font-family: 'IBM Plex Mono', monospace; font-size: 13px;
+  }
+  .mt-owes { color: #B8B8B8; }
+  .mt-amt { color: #E8E8E8; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .mt-pos { color: #2ECC71; }
+  .mt-neg { color: #FF4D4D; }
+
   .dnd-meta { font-size: 11px; color: var(--ink-faint); }
 
   /* ---- Only Losses reveal ---- */
@@ -4902,18 +5003,24 @@ async function renderTest() {
   const mode = window._sandboxMode || "styles";
   app.innerHTML = `
     <div class="st-section-title">🧪 Sandbox — visible only to you</div>
-    <div class="bl-controls" style="margin-bottom:20px;max-width:420px">
-      <button class="bl-sort ${mode === "styles" ? "active" : ""}" id="modeStyles">Visual styles</button>
+    <div class="bl-controls" style="margin-bottom:20px;max-width:680px;flex-wrap:wrap">
+      <button class="bl-sort ${mode === "styles" ? "active" : ""}" id="modeStyles">Sports Wire</button>
+      <button class="bl-sort ${mode === "sportsbook" ? "active" : ""}" id="modeSportsbook">Sportsbook</button>
+      <button class="bl-sort ${mode === "sleeper" ? "active" : ""}" id="modeSleeper">Sleeper-style</button>
+      <button class="bl-sort ${mode === "terminal" ? "active" : ""}" id="modeTerminal">Money Terminal</button>
       <button class="bl-sort ${mode === "dnd" ? "active" : ""}" id="modeDnd">Drag-to-pick</button>
     </div>
     <div id="sandboxbody"><div class="center-msg">Loading…</div></div>`;
   document.getElementById("modeStyles").onclick = () => { window._sandboxMode = "styles"; renderTest(); };
+  document.getElementById("modeSportsbook").onclick = () => { window._sandboxMode = "sportsbook"; renderTest(); };
+  document.getElementById("modeSleeper").onclick = () => { window._sandboxMode = "sleeper"; renderTest(); };
+  document.getElementById("modeTerminal").onclick = () => { window._sandboxMode = "terminal"; renderTest(); };
   document.getElementById("modeDnd").onclick = () => { window._sandboxMode = "dnd"; renderTest(); };
 
-  if (mode === "styles") {
-    renderStyleGallery();
-    return;
-  }
+  if (mode === "styles") { renderStyleGallery(); return; }
+  if (mode === "sportsbook") { renderSportsbookStyle(); return; }
+  if (mode === "sleeper") { renderSleeperStyle(); return; }
+  if (mode === "terminal") { renderMoneyTerminalStyle(); return; }
 
   const body = document.getElementById("sandboxbody");
   try {
@@ -5013,9 +5120,161 @@ function renderStyleGallery() {
   };
 }
 
-// Drag-and-drop pick experiment: teams as draggable score tiles, dragged into
-// ranked slots instead of dropdowns. Pure interaction prototype — nothing here
-// writes to Supabase or touches real picks; it's testing the feel only.
+// ------------------------------------------------------------
+// Sportsbook style (DraftKings/FanDuel genre) — dark, one vivid brand
+// color, odds shown as tappable badge pills, and a persistent "pick slip"
+// drawer summarizing your selections — the actual DNA of a sportsbook UI,
+// not a table wearing sportsbook colors.
+// ------------------------------------------------------------
+function renderSportsbookStyle() {
+  const body = document.getElementById("sandboxbody");
+  if (!body) return;
+  const games = [
+    { home: "Jaguars", away: "Browns", homeScore: 18, awayScore: 82, spread: "+7.5" },
+    { home: "Raiders", away: "Dolphins", homeScore: 25, awayScore: 75, spread: "+3.5" },
+    { home: "Chargers", away: "Cardinals", homeScore: 12, awayScore: 88, spread: "+9.5" },
+    { home: "Titans", away: "Jets", homeScore: 22, awayScore: 78, spread: "+7" },
+  ];
+  const rows = games.map((g, i) => `
+    <div class="sb-game">
+      <div class="sb-teams">
+        <div class="sb-team-row"><span>${g.away}</span><span class="sb-spread">${g.spread}</span></div>
+        <div class="sb-team-row sb-home"><span>${g.home}</span><span class="sb-spread">${(-parseFloat(g.spread)).toFixed(1).replace('-0.0','0')}</span></div>
+      </div>
+      <button class="sb-odds-btn" data-i="${i}" data-team="${g.away}" data-score="${g.awayScore}">
+        <span class="sb-odds-score">${g.awayScore}</span><span class="sb-odds-lbl">loser score</span>
+      </button>
+    </div>`).join("");
+
+  body.innerHTML = `
+    <p class="hint" style="margin-bottom:20px">DraftKings/FanDuel genre: dark by default, one vivid brand color,
+      odds as tappable badges, and a persistent pick slip that fills up as you tap — a bet-slip metaphor mapped
+      onto building your ranked list.</p>
+    <div class="sb-wrap">
+      <div class="sb-main">
+        <div class="sb-section-head">Week 1 — Best Losers</div>
+        <div class="sb-games">${rows}</div>
+      </div>
+      <div class="sb-slip" id="sbSlip">
+        <div class="sb-slip-head">Your Picks <span id="sbSlipCount">0/8</span></div>
+        <div class="sb-slip-body" id="sbSlipBody">
+          <div class="sb-slip-empty">Tap a loser score to add it to your slip</div>
+        </div>
+        <button class="sb-slip-btn" id="sbSlipSubmit" disabled>Submit picks</button>
+      </div>
+    </div>`;
+
+  const picked = [];
+  const renderSlip = () => {
+    document.getElementById("sbSlipCount").textContent = `${picked.length}/8`;
+    const slipBody = document.getElementById("sbSlipBody");
+    slipBody.innerHTML = picked.length
+      ? picked.map((p, i) => `<div class="sb-slip-item"><span>${8 - i}</span>${p.team}<b>${p.score}</b></div>`).join("")
+      : `<div class="sb-slip-empty">Tap a loser score to add it to your slip</div>`;
+    const btn = document.getElementById("sbSlipSubmit");
+    btn.disabled = picked.length === 0;
+  };
+  body.querySelectorAll(".sb-odds-btn").forEach(btn => {
+    btn.onclick = () => {
+      const team = btn.dataset.team, score = btn.dataset.score;
+      if (picked.find(p => p.team === team)) return;
+      picked.push({ team, score });
+      btn.classList.add("sb-odds-selected");
+      renderSlip();
+    };
+  });
+}
+
+// ------------------------------------------------------------
+// Sleeper-style — the closest real analog, since this app IS a pick'em/
+// fantasy game, not a news site. Bold condensed type, confident color
+// blocking, a horizontally-scrolling matchup carousel with avatar circles
+// (initials, not real logos) instead of a static table.
+// ------------------------------------------------------------
+function renderSleeperStyle() {
+  const body = document.getElementById("sandboxbody");
+  if (!body) return;
+  const cards = [
+    { a: "CLE", b: "JAX", scoreA: 82, live: true },
+    { a: "MIA", b: "LV", scoreA: 75, live: true },
+    { a: "ARI", b: "LAC", scoreA: 88, live: false },
+    { a: "NYJ", b: "TEN", scoreA: 78, live: false },
+    { a: "PIT", b: "ATL", scoreA: 67, live: false },
+  ];
+  const cardsHtml = cards.map(c => `
+    <div class="sl-card">
+      ${c.live ? `<div class="sl-live-tag">● TODAY</div>` : ""}
+      <div class="sl-matchup">
+        <div class="sl-avatar">${c.a}</div>
+        <div class="sl-vs">@</div>
+        <div class="sl-avatar sl-avatar-alt">${c.b}</div>
+      </div>
+      <div class="sl-score">${c.scoreA}<span>loser score</span></div>
+    </div>`).join("");
+
+  body.innerHTML = `
+    <p class="hint" style="margin-bottom:20px">Sleeper genre: this app IS a pick'em game, same category as Sleeper
+      itself — bold condensed type, confident single-accent color blocking, and a horizontally-scrolling card
+      carousel instead of a static list.</p>
+    <div class="sl-header">
+      <div class="sl-title">This Week</div>
+      <div class="sl-pill">8 picks needed</div>
+    </div>
+    <div class="sl-carousel">${cardsHtml}</div>
+    <div class="sl-standings">
+      <div class="sl-section-head">Standings</div>
+      <div class="sl-standing-row"><span class="sl-rank">1</span><span class="sl-name">Reid</span><span class="sl-rec">24-9</span></div>
+      <div class="sl-standing-row"><span class="sl-rank">2</span><span class="sl-name">🤖 Only Losses</span><span class="sl-rec">22-11</span></div>
+      <div class="sl-standing-row"><span class="sl-rank">3</span><span class="sl-name">Tyler</span><span class="sl-rec">19-14</span></div>
+    </div>`;
+}
+
+// ------------------------------------------------------------
+// Money Terminal — Bloomberg/Robinhood genre, applied specifically to the
+// money-heavy screens (pot, ledger, who-owes-who) rather than the whole
+// app. Dense monospace numerals, green/red for owed-to-you vs. you-owe,
+// minimal chrome — a real trading-terminal composition, not a styled table.
+// ------------------------------------------------------------
+function renderMoneyTerminalStyle() {
+  const body = document.getElementById("sandboxbody");
+  if (!body) return;
+  if (!window._mtFontLoaded) {
+    window._mtFontLoaded = true;
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = "https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;700&display=swap";
+    document.head.appendChild(link);
+  }
+  const ledger = [
+    { from: "Kurt", to: "Reid", amount: 6.25 },
+    { from: "Tyler", to: "Reid", amount: 6.25 },
+    { from: "Tyler", to: "Kurt", amount: 3.00 },
+  ];
+  const rows = ledger.map(l => `
+    <div class="mt-row">
+      <span class="mt-owes">${l.from} → ${l.to}</span>
+      <span class="mt-amt">$${l.amount.toFixed(2)}</span>
+    </div>`).join("");
+
+  body.innerHTML = `
+    <p class="hint" style="margin-bottom:20px">Bloomberg/Robinhood genre, scoped to the money screens specifically
+      (pot, ledger, settle-up) rather than the whole app — dense monospace numerals, green/red for owed-to-you vs.
+      you-owe, minimal decoration.</p>
+    <div class="mt-panel">
+      <div class="mt-head">SEASON POT</div>
+      <div class="mt-pot">$47.00</div>
+      <div class="mt-sub">winner-take-all · most weekly wins</div>
+      <div class="mt-divider"></div>
+      <div class="mt-head">SETTLE UP</div>
+      ${rows}
+      <div class="mt-divider"></div>
+      <div class="mt-head">NET POSITION</div>
+      <div class="mt-row"><span class="mt-owes">Reid</span><span class="mt-amt mt-pos">+$12.50</span></div>
+      <div class="mt-row"><span class="mt-owes">Kurt</span><span class="mt-amt mt-neg">−$3.25</span></div>
+      <div class="mt-row"><span class="mt-owes">Tyler</span><span class="mt-amt mt-neg">−$9.25</span></div>
+    </div>`;
+}
+
 function renderDragPickPrototype(wk, teams) {
   const N = wk.picks_required;
   let slots = new Array(N).fill(null);            // slots[i] = team object or null
