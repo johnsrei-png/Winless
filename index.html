@@ -976,14 +976,15 @@
   .sb-wrap { display: grid; grid-template-columns: 1fr 280px; gap: 18px; align-items: start; background: #0D0F12; padding: 18px; border-radius: 8px; }
   @media (max-width: 700px) { .sb-wrap { grid-template-columns: 1fr; } }
   .sb-section-head { font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-size: 20px; color: #EDEFF2; margin-bottom: 14px; }
-  .sb-games { display: flex; flex-direction: column; gap: 8px; }
+  .sb-games { display: flex; flex-direction: column; gap: 8px; max-height: 74vh; overflow-y: auto; }
   .sb-game {
     display: flex; align-items: center; justify-content: space-between; gap: 14px;
     background: #16191E; border: 1px solid #262B33; border-radius: 8px; padding: 12px 16px;
   }
-  .sb-team-row { display: flex; justify-content: space-between; gap: 20px; font-size: 14px; color: #C9CDD3; padding: 3px 0; }
-  .sb-team-row.sb-home { color: #EDEFF2; font-weight: 600; }
-  .sb-spread { color: #8A9099; font-variant-numeric: tabular-nums; font-size: 12px; }
+  .sb-team-info { cursor: pointer; min-width: 0; }
+  .sb-team-info:hover .sb-team-name { color: #53D337; }
+  .sb-team-name { font-size: 15px; font-weight: 600; color: #EDEFF2; transition: color .12s; }
+  .sb-team-meta { font-size: 12px; color: #8A9099; margin-top: 2px; }
   .sb-odds-btn {
     background: #1E232B; border: 1px solid #2E3540; border-radius: 8px; padding: 10px 18px;
     display: flex; flex-direction: column; align-items: center; gap: 2px; cursor: pointer;
@@ -1002,14 +1003,24 @@
   .sb-slip-head span { color: #53D337; }
   .sb-slip-empty { font-size: 12px; color: #7A8088; text-align: center; padding: 20px 10px; }
   .sb-slip-item {
-    display: flex; align-items: center; gap: 10px; font-size: 13px; color: #C9CDD3; padding: 6px 0;
-    border-bottom: 1px solid #1F242B;
+    display: flex; align-items: center; gap: 10px; font-size: 13px; color: #C9CDD3; padding: 8px 4px;
+    border-bottom: 1px solid #1F242B; cursor: grab; touch-action: none; -webkit-tap-highlight-color: transparent;
+    border-radius: 4px;
   }
-  .sb-slip-item span {
+  .sb-slip-item:hover { background: #1B1F26; }
+  .sb-slip-item.sb-slip-dragging {
+    cursor: grabbing; z-index: 10; background: #1E232B; box-shadow: 0 8px 20px rgba(0,0,0,0.5);
+  }
+  .sb-slip-rank {
     background: #262B33; color: #EDEFF2; font-size: 11px; font-weight: 700; border-radius: 4px;
     width: 18px; height: 18px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;
   }
-  .sb-slip-item b { margin-left: auto; color: #53D337; }
+  .sb-slip-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sb-slip-item b { color: #53D337; }
+  .sb-slip-remove {
+    color: #7A8088; font-size: 13px; cursor: pointer; padding: 2px 4px; flex-shrink: 0;
+  }
+  .sb-slip-remove:hover { color: #FF4D4D; }
   .sb-slip-btn {
     width: 100%; background: #53D337; color: #0D0F12; border: none; padding: 13px; margin-top: 12px;
     font-family: 'Barlow Semi Condensed', sans-serif; font-weight: 700; font-size: 14px; letter-spacing: 0.03em;
@@ -5126,37 +5137,45 @@ function renderStyleGallery() {
 // drawer summarizing your selections — the actual DNA of a sportsbook UI,
 // not a table wearing sportsbook colors.
 // ------------------------------------------------------------
-function renderSportsbookStyle() {
+async function renderSportsbookStyle() {
   const body = document.getElementById("sandboxbody");
   if (!body) return;
-  const games = [
-    { home: "Jaguars", away: "Browns", homeScore: 18, awayScore: 82, spread: "+7.5" },
-    { home: "Raiders", away: "Dolphins", homeScore: 25, awayScore: 75, spread: "+3.5" },
-    { home: "Chargers", away: "Cardinals", homeScore: 12, awayScore: 88, spread: "+9.5" },
-    { home: "Titans", away: "Jets", homeScore: 22, awayScore: 78, spread: "+7" },
-  ];
-  const rows = games.map((g, i) => `
+  body.innerHTML = `<div class="center-msg">Loading…</div>`;
+
+  const weeks = await sbGet("weeks?order=week_number.desc&limit=1").catch(() => []);
+  if (!weeks || !weeks.length) { body.innerHTML = `<div class="center-msg">No week open to preview against.</div>`; return; }
+  const wk = weeks[0];
+  const teams = await computeBestLoserScores(wk.week_number).catch(() => []);
+  if (!teams.length) { body.innerHTML = `<div class="center-msg">No matchups posted yet for Week ${wk.week_number}.</div>`; return; }
+
+  const N = wk.picks_required;
+  const spreadTxt = (t) => t.teamSpread == null ? "—"
+    : t.teamSpread > 0 ? `+${t.teamSpread} dog` : t.teamSpread < 0 ? `${t.teamSpread} fav` : "PK";
+  const sorted = teams.slice().sort((a, b) => b.score - a.score);
+  let picked = [];   // ordered array of team objects — order IS the confidence rank
+
+  const rows = sorted.map(t => `
     <div class="sb-game">
-      <div class="sb-teams">
-        <div class="sb-team-row"><span>${g.away}</span><span class="sb-spread">${g.spread}</span></div>
-        <div class="sb-team-row sb-home"><span>${g.home}</span><span class="sb-spread">${(-parseFloat(g.spread)).toFixed(1).replace('-0.0','0')}</span></div>
+      <div class="sb-team-info" data-ab="${t.ab}">
+        <div class="sb-team-name">${t.name}</div>
+        <div class="sb-team-meta">${t.side === "away" ? "@" : "vs"} ${t.oppName} · ${spreadTxt(t)}</div>
       </div>
-      <button class="sb-odds-btn" data-i="${i}" data-team="${g.away}" data-score="${g.awayScore}">
-        <span class="sb-odds-score">${g.awayScore}</span><span class="sb-odds-lbl">loser score</span>
+      <button class="sb-odds-btn" data-ab="${t.ab}">
+        <span class="sb-odds-score">${t.score}</span><span class="sb-odds-lbl">loser score</span>
       </button>
     </div>`).join("");
 
   body.innerHTML = `
     <p class="hint" style="margin-bottom:20px">DraftKings/FanDuel genre: dark by default, one vivid brand color,
-      odds as tappable badges, and a persistent pick slip that fills up as you tap — a bet-slip metaphor mapped
-      onto building your ranked list.</p>
+      odds as tappable badges, and a persistent pick slip. Tap a team's name for its loser-score math; tap the
+      badge to add it to your slip, then <b>drag slip items to reorder</b> — order sets confidence points.</p>
     <div class="sb-wrap">
       <div class="sb-main">
-        <div class="sb-section-head">Week 1 — Best Losers</div>
+        <div class="sb-section-head">Week ${wk.week_number} — Best Losers</div>
         <div class="sb-games">${rows}</div>
       </div>
       <div class="sb-slip" id="sbSlip">
-        <div class="sb-slip-head">Your Picks <span id="sbSlipCount">0/8</span></div>
+        <div class="sb-slip-head">Your Picks <span id="sbSlipCount">0/${N}</span></div>
         <div class="sb-slip-body" id="sbSlipBody">
           <div class="sb-slip-empty">Tap a loser score to add it to your slip</div>
         </div>
@@ -5164,22 +5183,112 @@ function renderSportsbookStyle() {
       </div>
     </div>`;
 
-  const picked = [];
-  const renderSlip = () => {
-    document.getElementById("sbSlipCount").textContent = `${picked.length}/8`;
+  function showBreakdown(t) {
+    const overlay = document.createElement("div");
+    overlay.className = "modal-overlay";
+    const scoreColor = t.score >= 65 ? "var(--live)" : t.score >= 50 ? "var(--gold)" : "var(--ink-faint)";
+    overlay.innerHTML = `
+      <div class="modal">
+        <h2 style="display:flex;align-items:center;gap:12px">
+          <span style="font-family:'Barlow Condensed',sans-serif;font-size:36px;color:${scoreColor}">${t.score}</span>
+          ${t.name}
+        </h2>
+        <p style="margin-top:-8px">${t.side === "away" ? "@" : "vs"} ${t.oppName} · ${t.when}</p>
+        <div class="bl-detail open" style="display:block;padding:0">
+          ${(t.steps || []).map(s => `<div class="bl-step"><span>${s.label}</span><span class="bl-step-v">${s.val}</span></div>`).join("")}
+          <div class="bl-step bl-step-total"><span><b>Loser score</b></span><span class="bl-step-v"><b>${t.score}</b></span></div>
+        </div>
+        <div class="modal-actions"><button class="btn btn-ghost" id="closebreakdown">Close</button></div>
+      </div>`;
+    document.body.appendChild(overlay);
+    overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+    overlay.querySelector("#closebreakdown").onclick = () => overlay.remove();
+  }
+
+  function renderSlip() {
+    document.getElementById("sbSlipCount").textContent = `${picked.length}/${N}`;
     const slipBody = document.getElementById("sbSlipBody");
     slipBody.innerHTML = picked.length
-      ? picked.map((p, i) => `<div class="sb-slip-item"><span>${8 - i}</span>${p.team}<b>${p.score}</b></div>`).join("")
+      ? picked.map((p, i) => `
+          <div class="sb-slip-item" data-ab="${p.ab}">
+            <span class="sb-slip-rank">${N - i}</span>
+            <span class="sb-slip-name">${p.name}</span>
+            <b>${p.score}</b>
+            <span class="sb-slip-remove" data-ab="${p.ab}">✕</span>
+          </div>`).join("")
       : `<div class="sb-slip-empty">Tap a loser score to add it to your slip</div>`;
-    const btn = document.getElementById("sbSlipSubmit");
-    btn.disabled = picked.length === 0;
-  };
+    document.getElementById("sbSlipSubmit").disabled = picked.length === 0;
+
+    slipBody.querySelectorAll(".sb-slip-remove").forEach(x => {
+      x.onclick = (e) => {
+        e.stopPropagation();
+        const ab = x.dataset.ab;
+        picked = picked.filter(p => p.ab !== ab);
+        const btn = body.querySelector(`.sb-odds-btn[data-ab="${ab}"]`);
+        if (btn) btn.classList.remove("sb-odds-selected");
+        renderSlip();
+      };
+    });
+    wireSlipDrag();
+  }
+
+  function wireSlipDrag() {
+    document.querySelectorAll(".sb-slip-item").forEach(item => {
+      item.onpointerdown = (e) => {
+        if (e.target.classList.contains("sb-slip-remove")) return;   // let the × handle its own click
+        e.preventDefault();
+        const ab = item.dataset.ab;
+        const startY = e.clientY;
+        let moved = false;
+        item.setPointerCapture(e.pointerId);
+        const move = (ev) => {
+          const dy = ev.clientY - startY;
+          if (!moved && Math.abs(dy) > 6) { moved = true; item.classList.add("sb-slip-dragging"); }
+          if (moved) item.style.transform = `translateY(${dy}px)`;
+        };
+        const up = (ev) => {
+          item.removeEventListener("pointermove", move);
+          item.removeEventListener("pointerup", up);
+          try { item.releasePointerCapture(ev.pointerId); } catch (err) {}
+          item.classList.remove("sb-slip-dragging");
+          item.style.transform = "";
+          if (moved) {
+            item.style.pointerEvents = "none";
+            const el = document.elementFromPoint(ev.clientX, ev.clientY);
+            item.style.pointerEvents = "";
+            const targetItem = el ? el.closest(".sb-slip-item") : null;
+            if (targetItem && targetItem !== item) {
+              const fromIdx = picked.findIndex(p => p.ab === ab);
+              const toIdx = picked.findIndex(p => p.ab === targetItem.dataset.ab);
+              if (fromIdx !== -1 && toIdx !== -1) {
+                const [moving] = picked.splice(fromIdx, 1);
+                picked.splice(toIdx, 0, moving);
+              }
+            }
+          }
+          renderSlip();
+        };
+        item.addEventListener("pointermove", move);
+        item.addEventListener("pointerup", up);
+      };
+    });
+  }
+
+  body.querySelectorAll(".sb-team-info").forEach(el => {
+    el.onclick = () => showBreakdown(sorted.find(t => t.ab === el.dataset.ab));
+  });
   body.querySelectorAll(".sb-odds-btn").forEach(btn => {
     btn.onclick = () => {
-      const team = btn.dataset.team, score = btn.dataset.score;
-      if (picked.find(p => p.team === team)) return;
-      picked.push({ team, score });
-      btn.classList.add("sb-odds-selected");
+      const ab = btn.dataset.ab;
+      const already = picked.find(p => p.ab === ab);
+      if (already) {
+        picked = picked.filter(p => p.ab !== ab);
+        btn.classList.remove("sb-odds-selected");
+      } else {
+        if (picked.length >= N) return;
+        picked.push(sorted.find(t => t.ab === ab));
+        btn.classList.add("sb-odds-selected");
+      }
       renderSlip();
     };
   });
