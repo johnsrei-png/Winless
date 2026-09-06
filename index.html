@@ -902,6 +902,107 @@
   }
   .dnd-teaminfo { min-width: 0; }
   .dnd-name { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* ============================================================
+     STYLE GALLERY — sandbox only. Three fully self-contained design
+     directions, each scoped under .style-preview-a/b/c so nothing here
+     touches the live app's actual classes or variables.
+  ============================================================ */
+  .style-gallery { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 22px; }
+  .style-preview { border-radius: 4px; overflow: hidden; }
+
+  /* ---- A: Ledger (light, financial/stat-sheet) ---- */
+  .style-preview-a { background: #EFEDE7; padding: 18px; }
+  .p-a-label { font-family: 'Public Sans', sans-serif; font-size: 12px; color: #6B6558; margin-bottom: 10px; }
+  .p-a-card { background: #FCFCFA; border: 1px solid #DEDACE; padding: 22px 24px; }
+  .p-a-head {
+    font-family: 'Source Serif 4', serif; font-weight: 700; font-size: 19px; color: #14171A;
+    padding-bottom: 12px; border-bottom: 1px solid #DEDACE; margin-bottom: 16px;
+  }
+  .p-a-score {
+    font-family: 'Source Serif 4', serif; font-weight: 700; font-size: 46px; color: #1F6F4A;
+    line-height: 1; margin-bottom: 18px;
+  }
+  .p-a-score span {
+    display: inline-block; font-family: 'Public Sans', sans-serif; font-weight: 500; font-size: 12px;
+    color: #6B6558; margin-left: 8px; vertical-align: middle;
+  }
+  .p-a-table { margin-bottom: 20px; }
+  .p-a-row {
+    display: grid; grid-template-columns: 20px 1fr 60px 50px; gap: 10px; align-items: center;
+    padding: 9px 0; border-bottom: 1px solid #EAE7DF; font-family: 'Public Sans', sans-serif; font-size: 13px;
+  }
+  .p-a-row:last-child { border-bottom: none; }
+  .p-a-rank { color: #9A9384; font-weight: 600; }
+  .p-a-name { color: #14171A; font-weight: 500; }
+  .p-a-rec, .p-a-conf { font-variant-numeric: tabular-nums; color: #4A4638; text-align: right; }
+  .p-a-btn {
+    background: #14171A; color: #FCFCFA; border: none; padding: 11px 20px; font-family: 'Public Sans', sans-serif;
+    font-weight: 600; font-size: 13px; border-radius: 2px; cursor: pointer;
+  }
+
+  /* ---- B: Nightbook (dark, editorial, restrained brass) ---- */
+  .style-preview-b { background: #16140F; padding: 18px; }
+  .p-b-label { font-family: 'Inter', sans-serif; font-size: 12px; color: #7D7462; margin-bottom: 10px; }
+  .p-b-card { background: #221F1C; border: 1px solid #38332B; padding: 24px 26px; }
+  .p-b-head {
+    font-family: 'Fraunces', serif; font-weight: 600; font-size: 21px; color: #EDE8E2; margin-bottom: 18px;
+  }
+  .p-b-score {
+    font-family: 'Fraunces', serif; font-weight: 700; font-size: 48px; color: #B08D57;
+    line-height: 1; margin-bottom: 18px;
+  }
+  .p-b-score span {
+    display: inline-block; font-family: 'Inter', sans-serif; font-weight: 400; font-size: 12px;
+    color: #7D7462; margin-left: 8px; vertical-align: middle;
+  }
+  .p-b-table { margin-bottom: 22px; }
+  .p-b-row {
+    display: grid; grid-template-columns: 20px 1fr 60px 50px; gap: 10px; align-items: center;
+    padding: 10px 0; border-bottom: 1px solid #322D26; font-family: 'Inter', sans-serif; font-size: 13px;
+  }
+  .p-b-row:last-child { border-bottom: none; }
+  .p-b-rank { color: #6E6656; font-weight: 600; }
+  .p-b-name { color: #EDE8E2; font-weight: 500; }
+  .p-b-rec, .p-b-conf { font-variant-numeric: tabular-nums; color: #A99E8B; text-align: right; }
+  .p-b-btn {
+    background: #B08D57; color: #1C1A16; border: none; padding: 11px 20px; font-family: 'Inter', sans-serif;
+    font-weight: 600; font-size: 13px; border-radius: 3px; cursor: pointer;
+  }
+
+  /* ---- C: Scoreboard Mono (light, monochrome + one accent, grid) ---- */
+  .style-preview-c { background: #EDEDED; padding: 18px; }
+  .p-c-label { font-family: 'Archivo', sans-serif; font-size: 12px; color: #767676; margin-bottom: 10px; }
+  .p-c-card { background: #FFFFFF; padding: 26px; }
+  .p-c-head {
+    font-family: 'Archivo', sans-serif; font-weight: 600; font-size: 18px; color: #0A0A0A; margin-bottom: 22px;
+  }
+  .p-c-score {
+    font-family: 'IBM Plex Mono', monospace; font-weight: 700; font-size: 44px; color: #0A0A0A;
+    line-height: 1; margin-bottom: 22px; letter-spacing: -0.02em;
+  }
+  .p-c-score span {
+    display: inline-block; font-family: 'Archivo', sans-serif; font-weight: 500; font-size: 11px;
+    color: #8A8A8A; margin-left: 10px; vertical-align: middle;
+  }
+  .p-c-table { margin-bottom: 24px; }
+  .p-c-row {
+    display: grid; grid-template-columns: 24px 1fr 64px 52px; gap: 14px; align-items: center;
+    padding: 12px 0; font-family: 'Archivo', sans-serif; font-size: 13px;
+  }
+  .p-c-rank {
+    font-family: 'IBM Plex Mono', monospace; color: #B0B0B0; font-weight: 600;
+  }
+  .p-c-name { color: #0A0A0A; font-weight: 500; }
+  .p-c-rec, .p-c-conf {
+    font-family: 'IBM Plex Mono', monospace; color: #0A0A0A; text-align: right; font-weight: 600;
+  }
+  .p-c-btn {
+    background: #0A0A0A; color: #FFFFFF; border: none; padding: 12px 20px;
+    font-family: 'IBM Plex Mono', monospace; font-weight: 700; font-size: 12px;
+    letter-spacing: 0.08em; text-transform: uppercase; cursor: pointer;
+  }
+
   .dnd-meta { font-size: 11px; color: var(--ink-faint); }
 
   /* ---- Only Losses reveal ---- */
@@ -4829,23 +4930,112 @@ function routeTab() {
 // ============================================================
 async function renderTest() {
   renderWhoami();
-  app.innerHTML = `<div class="center-msg">Loading…</div>`;
+  const mode = window._sandboxMode || "styles";
+  app.innerHTML = `
+    <div class="st-section-title">🧪 Sandbox — visible only to you</div>
+    <div class="bl-controls" style="margin-bottom:20px;max-width:420px">
+      <button class="bl-sort ${mode === "styles" ? "active" : ""}" id="modeStyles">Visual styles</button>
+      <button class="bl-sort ${mode === "dnd" ? "active" : ""}" id="modeDnd">Drag-to-pick</button>
+    </div>
+    <div id="sandboxbody"><div class="center-msg">Loading…</div></div>`;
+  document.getElementById("modeStyles").onclick = () => { window._sandboxMode = "styles"; renderTest(); };
+  document.getElementById("modeDnd").onclick = () => { window._sandboxMode = "dnd"; renderTest(); };
+
+  if (mode === "styles") {
+    renderStyleGallery();
+    return;
+  }
+
+  const body = document.getElementById("sandboxbody");
   try {
     const weeks = await sbGet("weeks?order=week_number.desc&limit=1");
     if (!weeks || !weeks.length) {
-      app.innerHTML = `<div class="center-msg">No week open to preview against.</div>`;
+      body.innerHTML = `<div class="center-msg">No week open to preview against.</div>`;
       return;
     }
     const wk = weeks[0];
     const teams = await computeBestLoserScores(wk.week_number).catch(() => []);
     if (!teams.length) {
-      app.innerHTML = `<div class="center-msg">No matchups posted yet for Week ${wk.week_number}.</div>`;
+      body.innerHTML = `<div class="center-msg">No matchups posted yet for Week ${wk.week_number}.</div>`;
       return;
     }
     renderDragPickPrototype(wk, teams);
   } catch (e) {
-    app.innerHTML = `<div class="center-msg">Couldn't load: ${e.message}</div>`;
+    body.innerHTML = `<div class="center-msg">Couldn't load: ${e.message}</div>`;
   }
+}
+
+// ------------------------------------------------------------
+// Visual style gallery — three genuinely different design directions,
+// grounded in what this app actually is (a friend-group pool tracking real
+// money and stats), not just re-colored copies of the current look. Fully
+// scoped to .style-preview-* classes so nothing here touches the live app.
+// ------------------------------------------------------------
+function injectPreviewFonts() {
+  if (window._previewFontsLoaded) return;
+  window._previewFontsLoaded = true;
+  const link = document.createElement("link");
+  link.rel = "stylesheet";
+  link.href = "https://fonts.googleapis.com/css2?family=Source+Serif+4:wght@600;700&family=Public+Sans:wght@400;500;600&family=Fraunces:opsz,wght@40,600;40,700&family=IBM+Plex+Mono:wght@600;700&family=Archivo:wght@500;600&display=swap";
+  document.head.appendChild(link);
+}
+
+function renderStyleGallery() {
+  injectPreviewFonts();
+  const body = document.getElementById("sandboxbody");
+  if (!body) return;
+
+  const sampleRows = [
+    { rank: 1, name: "Reid", record: "24-9", conf: 184 },
+    { rank: 2, name: "🤖 Only Losses", record: "22-11", conf: 171 },
+    { rank: 3, name: "Tyler", record: "19-14", conf: 152 },
+  ];
+  const rowsOf = (cls) => sampleRows.map(r => `
+    <div class="${cls}-row">
+      <span class="${cls}-rank">${r.rank}</span>
+      <span class="${cls}-name">${r.name}</span>
+      <span class="${cls}-rec">${r.record}</span>
+      <span class="${cls}-conf">${r.conf}</span>
+    </div>`).join("");
+
+  body.innerHTML = `
+    <p class="hint" style="margin-bottom:20px">Three directions built from what this app actually is — a
+      friend-group pool tracking real stats and money — not just re-colored versions of the current look.
+      Same content (a standings snippet, a score, a button) in each, so you can compare directly.</p>
+
+    <div class="style-gallery">
+
+      <div class="style-preview style-preview-a">
+        <div class="p-a-label">A — Ledger</div>
+        <div class="p-a-card">
+          <div class="p-a-head">Season Standings</div>
+          <div class="p-a-score">84<span>loser score</span></div>
+          <div class="p-a-table">${rowsOf("p-a")}</div>
+          <button class="p-a-btn">Lock week &amp; reveal</button>
+        </div>
+      </div>
+
+      <div class="style-preview style-preview-b">
+        <div class="p-b-label">B — Nightbook</div>
+        <div class="p-b-card">
+          <div class="p-b-head">Season Standings</div>
+          <div class="p-b-score">84<span>loser score</span></div>
+          <div class="p-b-table">${rowsOf("p-b")}</div>
+          <button class="p-b-btn">Lock week &amp; reveal</button>
+        </div>
+      </div>
+
+      <div class="style-preview style-preview-c">
+        <div class="p-c-label">C — Scoreboard Mono</div>
+        <div class="p-c-card">
+          <div class="p-c-head">Season Standings</div>
+          <div class="p-c-score">84<span>loser score</span></div>
+          <div class="p-c-table">${rowsOf("p-c")}</div>
+          <button class="p-c-btn">Lock week &amp; reveal</button>
+        </div>
+      </div>
+
+    </div>`;
 }
 
 // Drag-and-drop pick experiment: teams as draggable score tiles, dragged into
@@ -5022,11 +5212,11 @@ function renderDragPickPrototype(wk, teams) {
     overlay.querySelector("#closebreakdown").onclick = () => overlay.remove();
   }
 
-  app.innerHTML = `
-    <div class="st-section-title">🧪 Drag-to-pick prototype — Week ${wk.week_number}</div>
+  document.getElementById("sandboxbody").innerHTML = `
     <p class="hint" style="margin-bottom:20px">Testing tiles instead of dropdowns. Drag a team's score tile into a
       ranked slot; drag a placed tile back out to the pool to swap it, or drag another tile onto an occupied slot
-      to bump it out. <b>This doesn't save anything</b> — pure interaction test.</p>
+      to bump it out. Tap any tile without dragging to see its score breakdown.
+      <b>This doesn't save anything</b> — pure interaction test.</p>
     <div id="dndbox"></div>`;
   render();
 }
