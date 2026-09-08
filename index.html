@@ -5021,6 +5021,8 @@ async function renderTest() {
       <button class="bl-sort ${mode === "sleeper" ? "active" : ""}" id="modeSleeper">Sleeper-style</button>
       <button class="bl-sort ${mode === "terminal" ? "active" : ""}" id="modeTerminal">Money Terminal</button>
       <button class="bl-sort ${mode === "dnd" ? "active" : ""}" id="modeDnd">Drag-to-pick</button>
+      <button class="bl-sort ${mode === "puzzledemo" ? "active" : ""}" id="modePuzzleDemo">Puzzle demo</button>
+      <button class="bl-sort ${mode === "peeldemo" ? "active" : ""}" id="modePeelDemo">Peel demo</button>
     </div>
     <div id="sandboxbody"><div class="center-msg">Loading…</div></div>`;
   document.getElementById("modeStyles").onclick = () => { window._sandboxMode = "styles"; renderTest(); };
@@ -5028,11 +5030,15 @@ async function renderTest() {
   document.getElementById("modeSleeper").onclick = () => { window._sandboxMode = "sleeper"; renderTest(); };
   document.getElementById("modeTerminal").onclick = () => { window._sandboxMode = "terminal"; renderTest(); };
   document.getElementById("modeDnd").onclick = () => { window._sandboxMode = "dnd"; renderTest(); };
+  document.getElementById("modePuzzleDemo").onclick = () => { window._sandboxMode = "puzzledemo"; renderTest(); };
+  document.getElementById("modePeelDemo").onclick = () => { window._sandboxMode = "peeldemo"; renderTest(); };
 
   if (mode === "styles") { renderStyleGallery(); return; }
   if (mode === "sportsbook") { renderSportsbookStyle(); return; }
   if (mode === "sleeper") { renderSleeperStyle(); return; }
   if (mode === "terminal") { renderMoneyTerminalStyle(); return; }
+  if (mode === "puzzledemo") { renderPuzzleDemo(); return; }
+  if (mode === "peeldemo") { renderPeelDemo(); return; }
 
   const body = document.getElementById("sandboxbody");
   try {
@@ -5411,6 +5417,184 @@ function renderMoneyTerminalStyle() {
       <div class="mt-row"><span class="mt-owes">Kurt</span><span class="mt-amt mt-neg">−$3.25</span></div>
       <div class="mt-row"><span class="mt-owes">Tyler</span><span class="mt-amt mt-neg">−$9.25</span></div>
     </div>`;
+}
+
+// ------------------------------------------------------------
+// Puzzle demo — the exact same 3x3 drag jigsaw as the real deadline gate,
+// but fully self-contained: no localStorage flag, no week dependency, no
+// side effects at all. Reset re-shuffles instantly so you can try it as
+// many times as you want.
+// ------------------------------------------------------------
+function renderPuzzleDemo() {
+  const body = document.getElementById("sandboxbody");
+  if (!body) return;
+  const N = PUZZLE_GRID, total = N * N;
+  let slots = shuffledSlots(total);
+
+  const pieceStyle = (contentIndex) => {
+    const row = Math.floor(contentIndex / N), col = contentIndex % N;
+    const pct = 100 / (N - 1);
+    return `background-image:url('${LATE_PUZZLE_IMAGE}');background-size:${N * 100}% ${N * 100}%;background-position:${col * pct}% ${row * pct}%;`;
+  };
+  const checkSolved = () => slots.every((v, i) => v === i);
+
+  function renderPieces() {
+    const grid = document.getElementById("puzzleDemoGrid");
+    if (!grid) return;
+    grid.innerHTML = slots.map((contentIdx, slotIdx) => `
+      <div class="puzzle-slot" data-slot="${slotIdx}">
+        <div class="puzzle-piece" data-slot="${slotIdx}" style="${pieceStyle(contentIdx)}"></div>
+      </div>`).join("");
+    wireDrag();
+  }
+
+  function wireDrag() {
+    document.querySelectorAll("#puzzleDemoGrid .puzzle-piece").forEach(piece => {
+      piece.onpointerdown = (e) => {
+        e.preventDefault();
+        const startX = e.clientX, startY = e.clientY;
+        const fromSlot = +piece.dataset.slot;
+        piece.setPointerCapture(e.pointerId);
+        piece.classList.add("dragging");
+        const move = (ev) => {
+          piece.style.transform = `translate(${ev.clientX - startX}px, ${ev.clientY - startY}px)`;
+        };
+        const up = (ev) => {
+          piece.classList.remove("dragging");
+          piece.style.transform = "";
+          piece.removeEventListener("pointermove", move);
+          piece.removeEventListener("pointerup", up);
+          try { piece.releasePointerCapture(ev.pointerId); } catch (err) {}
+          piece.style.pointerEvents = "none";
+          const el = document.elementFromPoint(ev.clientX, ev.clientY);
+          piece.style.pointerEvents = "";
+          const slotEl = el ? el.closest(".puzzle-slot") : null;
+          if (slotEl) {
+            const toSlot = +slotEl.dataset.slot;
+            if (toSlot !== fromSlot) [slots[fromSlot], slots[toSlot]] = [slots[toSlot], slots[fromSlot]];
+          }
+          renderPieces();
+          if (checkSolved()) {
+            const status = document.getElementById("puzzleDemoStatus");
+            if (status) status.innerHTML = `<span style="color:var(--live)">✓ Solved!</span> Hit reset to shuffle a new one.`;
+          }
+        };
+        piece.addEventListener("pointermove", move);
+        piece.addEventListener("pointerup", up);
+      };
+    });
+  }
+
+  function reset() {
+    slots = shuffledSlots(total);
+    const status = document.getElementById("puzzleDemoStatus");
+    if (status) status.textContent = "Drag pieces to reassemble.";
+    renderPieces();
+  }
+
+  body.innerHTML = `
+    <p class="hint" style="margin-bottom:16px">The exact same puzzle gate players see after missing the Tuesday
+      5pm deadline — play with it freely here. Nothing here touches real weeks or the puzzle-solved flag.</p>
+    <div class="locked-card" style="max-width:440px">
+      <div class="locked-sub" id="puzzleDemoStatus">Drag pieces to reassemble.</div>
+      <div class="puzzle-frame">
+        <div class="puzzle-grid" id="puzzleDemoGrid"></div>
+      </div>
+      <div class="locked-actions" style="margin-top:16px">
+        <button class="btn btn-ghost" id="puzzleDemoReset">🔄 Reset puzzle</button>
+      </div>
+    </div>`;
+  document.getElementById("puzzleDemoReset").onclick = reset;
+  renderPieces();
+}
+
+// ------------------------------------------------------------
+// Peel demo — the exact same 10x10 cutout-peel mechanic from Weekly Award,
+// but entirely in-memory: a fresh random tile board every load/reset, no
+// Supabase writes, no real money implications. Play with it as much as
+// you want and reset for a brand new board any time.
+// ------------------------------------------------------------
+function renderPeelDemo() {
+  const body = document.getElementById("sandboxbody");
+  if (!body) return;
+  let tileValues = generateTileValues();
+  let typeByTile = {}, valueByTile = {};
+  tileValues.forEach(t => { typeByTile[t.tile_index] = t.type; valueByTile[t.tile_index] = t.amount; });
+  let peeled = new Set();
+  let multiplierArmed = false;
+  let demoTotal = 0;
+
+  function renderTiles() {
+    const grid = document.getElementById("peelDemoGrid");
+    if (!grid) return;
+    let html = "";
+    for (let i = 0; i < TILE_COUNT; i++) {
+      const isPeeled = peeled.has(i);
+      html += `<div class="tile ${isPeeled ? "peeled" : "peelable"}" data-tile="${i}"></div>`;
+    }
+    grid.innerHTML = html;
+    if (!grid.classList.contains("armed")) grid.classList.add("armed");
+    grid.querySelectorAll(".tile.peelable").forEach(t => {
+      t.onclick = () => peelTileDemo(+t.dataset.tile);
+    });
+  }
+
+  function peelTileDemo(i) {
+    if (peeled.has(i)) return;
+    peeled.add(i);
+    const type = typeByTile[i] || "money";
+    const base = valueByTile[i] || 0;
+    const mult = multiplierArmed ? 2 : 1;
+    const status = document.getElementById("peelDemoStatus");
+
+    if (type === "multiplier") {
+      multiplierArmed = true;
+      status.innerHTML = `<span style="color:var(--gold)">×2 armed!</span> Your next peel is doubled.`;
+    } else if (type === "negative") {
+      multiplierArmed = false;
+      status.innerHTML = `<span style="color:var(--alert)">💀 Penalty — $${(base*mult).toFixed(2)} to the pot.</span>`;
+    } else if (type === "jackpot") {
+      multiplierArmed = false;
+      demoTotal += base * mult;
+      status.innerHTML = `<span style="color:var(--gold)">💰 JACKPOT — $${(base*mult).toFixed(2)} from each!</span>`;
+    } else {
+      multiplierArmed = false;
+      demoTotal += base * mult;
+      status.innerHTML = `$${(base*mult).toFixed(2)} from each${mult>1?" (×2 applied!)":""}.`;
+    }
+    document.getElementById("peelDemoTotal").textContent = `$${demoTotal.toFixed(2)}`;
+    renderTiles();
+  }
+
+  function reset() {
+    tileValues = generateTileValues();
+    typeByTile = {}; valueByTile = {};
+    tileValues.forEach(t => { typeByTile[t.tile_index] = t.type; valueByTile[t.tile_index] = t.amount; });
+    peeled = new Set();
+    multiplierArmed = false;
+    demoTotal = 0;
+    document.getElementById("peelDemoStatus").textContent = "Tap any tile to peel it.";
+    document.getElementById("peelDemoTotal").textContent = "$0.00";
+    renderTiles();
+  }
+
+  body.innerHTML = `
+    <p class="hint" style="margin-bottom:16px">The exact same peel-the-cutout mechanic from Weekly Award — a fresh
+      random board every time, all in memory. Nothing here writes to the real peels table or the real board.</p>
+    <div style="max-width:520px;margin:0 auto">
+      <div class="award-status" id="peelDemoStatus" style="margin-bottom:10px">Tap any tile to peel it.</div>
+      <div class="cutout-wrap">
+        <img class="cutout-img" src="${CUTOUT_IMAGE}" alt="cutout"
+          onerror="this.style.display='none'">
+        <div class="cutout-grid" id="peelDemoGrid"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px">
+        <div style="font-size:13px;color:var(--ink-dim)">Demo winnings: <b style="color:var(--live)" id="peelDemoTotal">$0.00</b></div>
+        <button class="btn btn-ghost" id="peelDemoReset">🔄 Reset board</button>
+      </div>
+    </div>`;
+  document.getElementById("peelDemoReset").onclick = reset;
+  renderTiles();
 }
 
 function renderDragPickPrototype(wk, teams) {
