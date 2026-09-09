@@ -1649,7 +1649,7 @@ function nextTuesday5pmAfter(openedAt) {
 // A pool of puzzle images — one is picked at random each time the gate
 // generates. Add more by extending this array and committing the matching
 // filenames next to index.html; any missing file just falls back gracefully.
-const LATE_PUZZLE_IMAGES = ["latepuzzle1.jpg", "latepuzzle2.jpg", "latepuzzle3.jpg"];
+const LATE_PUZZLE_IMAGES = ["latepuzzle1.jpg", "latepuzzle2.jpg", "latepuzzle3.jpg", "latepuzzle4.jpg"];
 const PUZZLE_GRID = 3;                        // 3x3 = 9 pieces
 
 function shuffledSlots(n) {
@@ -5504,6 +5504,25 @@ function renderPuzzleDemo() {
     reset();
   }
 
+  function checkImageLoads() {
+    const img = new Image();
+    const currentSrc = LATE_PUZZLE_IMAGES[imageIdx];
+    img.onload = () => {
+      const el = document.getElementById("puzzleDemoMissing");
+      if (el) el.style.display = "none";
+      const grid = document.getElementById("puzzleDemoGrid");
+      if (grid) grid.style.display = "";
+    };
+    img.onerror = () => {
+      const el = document.getElementById("puzzleDemoMissing");
+      if (el) { el.style.display = "flex"; el.innerHTML = `Couldn't load <b>${currentSrc}</b> — check it's
+        committed to the repo root with that exact filename (case-sensitive), and that the deploy finished.`; }
+      const grid = document.getElementById("puzzleDemoGrid");
+      if (grid) grid.style.display = "none";
+    };
+    img.src = currentSrc + "?_=" + Date.now();   // cache-bust so a fixed file shows up without a hard refresh
+  }
+
   body.innerHTML = `
     <p class="hint" style="margin-bottom:16px">The exact same puzzle gate players see after missing the Tuesday
       5pm deadline — one image is picked at random each real time it triggers. Play with it freely here; nothing
@@ -5512,6 +5531,7 @@ function renderPuzzleDemo() {
       <div class="locked-sub" id="puzzleDemoStatus">Drag pieces to reassemble.</div>
       <div class="puzzle-frame">
         <div class="puzzle-grid" id="puzzleDemoGrid"></div>
+        <div class="puzzle-missing" id="puzzleDemoMissing" style="display:none"></div>
       </div>
       <div style="font-size:11px;color:var(--ink-faint);margin-top:8px">Showing: <span id="puzzleDemoImgName">${LATE_PUZZLE_IMAGES[imageIdx]}</span></div>
       <div class="locked-actions" style="margin-top:12px">
@@ -5520,8 +5540,9 @@ function renderPuzzleDemo() {
       </div>
     </div>`;
   document.getElementById("puzzleDemoReset").onclick = reset;
-  document.getElementById("puzzleDemoNext").onclick = nextImage;
+  document.getElementById("puzzleDemoNext").onclick = () => { nextImage(); checkImageLoads(); };
   renderPieces();
+  checkImageLoads();
 }
 
 // ------------------------------------------------------------
