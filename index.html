@@ -2077,6 +2077,76 @@ function computeAggregate(allPicks, picksReq) {
 }
 
 // ---- Reveal + entry board ----
+// Wire click handlers on Only Losses pick chips — reads from
+// window._olPicksForContext (stashed right after the picks were fetched)
+// so this works regardless of which view (placed-summary or edit board)
+// the chips are currently rendered in.
+function wireOLChips() {
+  document.querySelectorAll(".ol-chip[data-ab]").forEach(chip => {
+    chip.style.cursor = "pointer";
+    chip.onclick = () => {
+      const picks = window._olPicksForContext || [];
+      const p = picks.find(x => x.team_abbr === chip.dataset.ab);
+      showOLPickContext(p, chip.dataset.ab);
+    };
+  });
+}
+
+// Explains WHY a pick was made — not just what it was. Shows the underlying
+// Best Loser math (same as everywhere else), plus the Only Losses-specific
+// weighting chain (calibration, line movement, standings-aware sharpness)
+// so a surprising pick (a big favorite, say) is actually explainable rather
+// than looking arbitrary. Older picks made before this feature existed won't
+// have this context stored — shown plainly rather than pretending otherwise.
+function showOLPickContext(pick, ab) {
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  const teamName = TEAM_NAME[ab] || ab;
+  const ctx = pick && pick.context;
+
+  if (!ctx) {
+    overlay.innerHTML = `
+      <div class="modal">
+        <h2>${teamName}</h2>
+        <p>This pick was made before detailed pick context was tracked, so there's nothing more to show for it
+          specifically. Picks from here forward will include the full reasoning — tap any future pick to see it.</p>
+        <div class="modal-actions"><button class="btn btn-ghost" id="closeolctx">Close</button></div>
+      </div>`;
+    document.body.appendChild(overlay);
+    overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+    overlay.querySelector("#closeolctx").onclick = () => overlay.remove();
+    return;
+  }
+
+  const sharpnessTxt = ctx.sharpness > 1 ? `${ctx.sharpness.toFixed(1)}× sharper (Only Losses was ahead — playing safer to protect its lead)`
+    : ctx.sharpness < 1 ? `${ctx.sharpness.toFixed(1)}× flatter (Only Losses was behind — playing looser to chase variance)`
+    : "neutral (Only Losses was roughly even)";
+
+  overlay.innerHTML = `
+    <div class="modal">
+      <h2 style="display:flex;align-items:center;gap:12px">
+        <span style="font-family:'Barlow Condensed',sans-serif;font-size:36px;color:var(--gold)">${ctx.rawScore}</span>
+        ${teamName}
+      </h2>
+      <p style="margin-top:-8px">Why Only Losses picked this team, step by step:</p>
+      <div class="bl-detail open" style="display:block;padding:0">
+        ${(ctx.steps || []).map(s => `<div class="bl-step"><span>${s.label}</span><span class="bl-step-v">${s.val}</span></div>`).join("")}
+        <div class="bl-step"><span><b>Best Loser score</b></span><span class="bl-step-v"><b>${ctx.rawScore}</b></span></div>
+        <div class="bl-step"><span>Season calibration</span><span class="bl-step-v">→ ${ctx.calibratedScore}</span></div>
+        ${ctx.moveBoost ? `<div class="bl-step"><span>Line movement nudge</span><span class="bl-step-v">${ctx.moveBoost >= 0 ? "+" : ""}${ctx.moveBoost}</span></div>` : ""}
+        <div class="bl-step"><span>Standings-aware sharpness</span><span class="bl-step-v">${sharpnessTxt}</span></div>
+        <div class="bl-step bl-step-total"><span><b>Final pick weight</b></span><span class="bl-step-v"><b>${ctx.finalWeight}</b></span></div>
+      </div>
+      <p class="hint" style="margin-top:14px">This is a <b>weight</b>, not a guarantee — picks are drawn at random
+        in proportion to weight, so even a heavily-favored team (low weight here) still has some chance of being
+        drawn. A surprising pick usually means exactly that happened, not a mistake.</p>
+      <div class="modal-actions"><button class="btn btn-ghost" id="closeolctx">Close</button></div>
+    </div>`;
+  document.body.appendChild(overlay);
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+  overlay.querySelector("#closeolctx").onclick = () => overlay.remove();
+}
+
 async function renderBoard(wk, headerHtml) {
   const [allPicks, entries, assigns] = await Promise.all([
     sbGet(`picks?week_number=eq.${wk.week_number}`),
@@ -2135,17 +2205,19 @@ async function renderBoard(wk, headerHtml) {
     ]);
     if (olPicks && olPicks.length) {
       const chips = olPicks.slice().sort((a, b) => b.score - a.score)
-        .map(p => `<span class="ol-chip">${TEAM_NAME[p.team_abbr] || p.team_abbr} <b>${p.score}</b></span>`).join("");
+        .map(p => `<span class="ol-chip" data-ab="${p.team_abbr}">${TEAM_NAME[p.team_abbr] || p.team_abbr} <b>${p.score}</b></span>`).join("");
       olHtml = `
         <div class="ol-reveal">
           <div class="ol-head">${olBadgeSvg(22)} <b>Only Losses</b> picked this week</div>
           <p class="ol-talk">"${trashTalk}"</p>
           <div class="ol-chips">${chips}</div>
           <p class="ol-note">Picks are weighted toward higher Best Loser scores — not guaranteed — and get
-            sharper over the season as real results calibrate the model. If Only Losses beats all three of you
-            outright on correct picks this week, everyone owes $5 to the season pot. A tie or any one of you
-            matching or beating it means nobody pays. Result shows on Standings once the week's graded.</p>
+            sharper over the season as real results calibrate the model. Tap a pick to see why it was chosen.
+            If Only Losses beats all three of you outright on correct picks this week, everyone owes $5 to the
+            season pot. A tie or any one of you matching or beating it means nobody pays. Result shows on
+            Standings once the week's graded.</p>
         </div>`;
+      window._olPicksForContext = olPicks;   // wired up after this HTML lands in the DOM
     }
   } catch (e) { /* Only Losses is a bonus mechanic; board still works without it */ }
 
@@ -2191,6 +2263,7 @@ async function renderBoard(wk, headerHtml) {
     document.getElementById("editboard").onclick = () => { BOARD_EDIT_MODE = true; renderWeek(); };
     document.getElementById("resolvenow").onclick = resolveNowHandler(wk);
     wireEntryRename();
+    wireOLChips();
     return;
   }
 
@@ -2261,6 +2334,7 @@ async function renderBoard(wk, headerHtml) {
   app.querySelectorAll("select.entry-team").forEach(s => {
     s.onchange = () => s.classList.toggle("unset", !s.value);
   });
+  wireOLChips();
   document.getElementById("saveboard").onclick = () => saveBoard(wk);
   document.getElementById("doneedit").onclick = async () => {
     // save current board, then drop back to clean summary
@@ -2905,13 +2979,23 @@ async function ensureOnlyLossesPicks(wk) {
       // apply standings-aware sharpness as an exponent (relative to a 50 midpoint
       // so it bends the curve rather than just scaling it)
       const sharpened = 50 * Math.pow(withMove / 50, sharpness);
-      return { ...t, calibratedWeight: Math.max(2, Math.min(98, sharpened)) };
+      const finalWeight = Math.max(2, Math.min(98, sharpened));
+      // keep the full reasoning chain, not just the final number — this is what
+      // lets us honestly explain later WHY a low-scored team still got picked
+      // (it's the weighting mechanism, not a bug), instead of just re-showing
+      // the same score with no context.
+      const pickContext = {
+        steps: t.steps || [], rawScore: t.score, calibratedScore: Math.round(calibrated),
+        lineMovement: Math.round((t.lineMovement || 0) * 10) / 10, moveBoost: Math.round(moveBoost * 10) / 10,
+        sharpness, finalWeight: Math.round(finalWeight),
+      };
+      return { ...t, calibratedWeight: finalWeight, pickContext };
     });
 
     const picked = weightedPickTeams(eligibleTeams, wk.picks_required);
     if (!picked.length) return [];
 
-    const rows = picked.map(t => ({ week_number: wk.week_number, team_abbr: t.ab, score: t.score }));
+    const rows = picked.map(t => ({ week_number: wk.week_number, team_abbr: t.ab, score: t.score, context: t.pickContext }));
     await sbUpsert("only_losses_picks", rows, "week_number,team_abbr");
     return rows;
   } catch (e) {
