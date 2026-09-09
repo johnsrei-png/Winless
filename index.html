@@ -1108,6 +1108,19 @@
   }
   .ol-chip b { color: var(--gold); font-family: 'Barlow Semi Condensed', sans-serif; }
   .ol-note { font-size: 12px; color: var(--ink-faint); line-height: 1.5; margin: 0; }
+  .ol-board { margin: 4px 0 14px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+  .ol-board-head {
+    font-family: 'Barlow Semi Condensed', sans-serif; font-weight: 700; font-size: 11px;
+    letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-dim); margin-bottom: 8px;
+  }
+  .ol-board-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 6px; }
+  .ol-entry-row {
+    display: flex; justify-content: space-between; gap: 8px; font-size: 12px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px;
+  }
+  .ol-entry-row.dead { opacity: 0.5; }
+  .ol-entry-id { color: var(--ink-faint); }
+  .ol-entry-team { font-weight: 600; }
   .st-row-bot { border-left: 2px solid var(--gold); }
   .st-row-bot .st-name { font-style: italic; }
   .um-legend { margin-bottom: 14px; }
@@ -2206,16 +2219,45 @@ async function renderBoard(wk, headerHtml) {
     if (olPicks && olPicks.length) {
       const chips = olPicks.slice().sort((a, b) => b.score - a.score)
         .map(p => `<span class="ol-chip" data-ab="${p.team_abbr}">${TEAM_NAME[p.team_abbr] || p.team_abbr} <b>${p.score}</b></span>`).join("");
+
+      // Only Losses' own entry board — same survive/die rules as the humans',
+      // entirely separate entries. Show this week's assignments + every
+      // entry's current alive/dead status.
+      let olBoardHtml = "";
+      try {
+        const [olEntries, olAssignsThisWeek] = await Promise.all([
+          ensureOLEntries(),
+          sbGet(`ol_assignments?week_number=eq.${wk.week_number}`).catch(() => []),
+        ]);
+        const teamByEntry = {};
+        (olAssignsThisWeek || []).forEach(a => { teamByEntry[a.entry_id] = a.team; });
+        const rowsOl = (olEntries || []).map(e => {
+          const team = teamByEntry[e.id];
+          const dead = e.status === "dead";
+          return `<div class="ol-entry-row ${dead ? "dead" : ""}">
+            <span class="ol-entry-id">Entry ${e.id}</span>
+            <span class="ol-entry-team">${dead ? `Out Wk ${e.died_week ?? "?"}` : (team ? (TEAM_NAME[team] || team) : "—")}</span>
+          </div>`;
+        }).join("");
+        olBoardHtml = `
+          <div class="ol-board">
+            <div class="ol-board-head">Only Losses' own entry board</div>
+            <div class="ol-board-grid">${rowsOl}</div>
+          </div>`;
+      } catch (e) { /* bonus display; skip quietly if it fails */ }
+
       olHtml = `
         <div class="ol-reveal">
           <div class="ol-head">${olBadgeSvg(22)} <b>Only Losses</b> picked this week</div>
           <p class="ol-talk">"${trashTalk}"</p>
           <div class="ol-chips">${chips}</div>
-          <p class="ol-note">Picks are weighted toward higher Best Loser scores — not guaranteed — and get
-            sharper over the season as real results calibrate the model. Tap a pick to see why it was chosen.
-            If Only Losses beats all three of you outright on correct picks this week, everyone owes $5 to the
-            season pot. A tie or any one of you matching or beating it means nobody pays. Result shows on
-            Standings once the week's graded.</p>
+          ${olBoardHtml}
+          <p class="ol-note">Only Losses runs its own parallel 6-entry board — same rules as yours (one team per
+            entry all season, entries die if their team wins). Its picks above also get assigned onto that board.
+            Picks are weighted toward higher Best Loser scores — not guaranteed — and get sharper over the season
+            as real results calibrate the model. Tap a pick to see why it was chosen. If Only Losses beats all
+            three of you outright on correct picks this week, everyone owes $5 to the season pot. A tie or any
+            one of you matching or beating it means nobody pays. Result shows on Standings once the week's graded.</p>
         </div>`;
       window._olPicksForContext = olPicks;   // wired up after this HTML lands in the DOM
     }
@@ -2945,30 +2987,79 @@ async function onlyLossesTrashTalk() {
 
 // Generate (once) and store Only Losses' picks for a week, at lock time —
 // using live scores + the same team-eligibility rules the players have.
+// Lazily seed Only Losses' own 6 entries the first time they're needed —
+// entirely separate from the humans' entries table.
+async function ensureOLEntries() {
+  let ent = await sbGet(`ol_entries?order=id.asc`).catch(() => []);
+  if (!ent || ent.length < 6) {
+    const seed = [1, 2, 3, 4, 5, 6].map(id => ({ id, status: "alive" }));
+    await sbUpsert("ol_entries", seed, "id").catch(() => {});
+    ent = await sbGet(`ol_entries?order=id.asc`).catch(() => []);
+  }
+  return ent || [];
+}
+
+// Grade any pending ol_assignments once their game has actually finished —
+// same survive/eliminate rule as the humans' board (team loses = survives,
+// team wins = eliminated), and mark the entry dead the moment it loses.
+async function resolveOLEntries() {
+  try {
+    const pending = await sbGet(`ol_assignments?result=eq.pending`).catch(() => []);
+    if (!pending || !pending.length) return;
+    const weeks = [...new Set(pending.map(p => p.week_number))];
+    for (const wk of weeks) {
+      const outcomes = await fetchWeekOutcomes(wk);
+      for (const row of pending.filter(p => p.week_number === wk)) {
+        const outcome = outcomes[row.team];
+        if (!outcome) continue;   // game not final yet — leave pending
+        const result = outcome === "lost" ? "survived" : "eliminated";
+        try {
+          await sb(`ol_assignments?id=eq.${row.id}`, { method: "PATCH", body: JSON.stringify({ result }) });
+          if (result === "eliminated") {
+            await sb(`ol_entries?id=eq.${row.entry_id}`, {
+              method: "PATCH", body: JSON.stringify({ status: "dead", died_week: wk }),
+            }).catch(() => {});
+          }
+        } catch (e) { /* try again next visit */ }
+      }
+    }
+  } catch (e) { /* Only Losses' board is a bonus mechanic; never block on it */ }
+}
+
+// Only Losses runs its OWN parallel 6-entry pool — same rules as the humans'
+// board (entries_remaining + 2 picks, one team per entry for the whole
+// season, entries survive or die) but entirely independent: its own entries,
+// its own usage history, its own entries_remaining that can diverge from the
+// humans' over the course of the season.
 async function ensureOnlyLossesPicks(wk) {
   try {
     const existing = await sbGet(`only_losses_picks?week_number=eq.${wk.week_number}`);
     if (existing && existing.length) return existing;   // already generated for this week
 
-    const [teams, entries, allAssigns, accResolved, sharpness] = await Promise.all([
+    await resolveOLEntries();   // make sure alive/dead status is current before deciding entries_remaining
+    const [teams, olEntries, olAssigns, accResolved, sharpness] = await Promise.all([
       computeBestLoserScores(wk.week_number).catch(() => []),
-      sbGet(`entries?order=id.asc`).catch(() => []),
-      sbGet(`assignments?order=week_number.asc`).catch(() => []),
+      ensureOLEntries(),
+      sbGet(`ol_assignments?order=week_number.asc`).catch(() => []),
       computeAccuracy().catch(() => []),   // this season's real predicted-vs-actual data
       onlyLossesSharpness(),               // ahead/behind the humans -> lower/higher variance
     ]);
     if (!teams.length) return [];
     const calibBuckets = bucketAccuracy(accResolved);
 
-    // same eligibility as the human pick screen: a team dead once every
-    // ALIVE entry has already used it can't be picked
-    const liveEntryIds = (entries || []).filter(e => e.status !== "dead").map(e => e.id);
-    const usedByAll = {};
-    (allAssigns || []).forEach(a => { (usedByAll[a.team] ||= new Set()).add(a.entry_id); });
+    const olAliveEntries = (olEntries || []).filter(e => e.status !== "dead");
+    const olPicksRequired = olAliveEntries.length + 2;
+
+    // same eligibility PATTERN as the human pick screen, but checked against
+    // Only Losses' OWN entries' usage history, not the humans' board — a team
+    // dead once every alive OL entry has already used it can't be picked
+    const usedByOLEntry = {};
+    (olAssigns || []).forEach(a => { (usedByOLEntry[a.team] ||= new Set()).add(a.entry_id); });
+    const aliveIds = olAliveEntries.map(e => e.id);
     const eligibleTeams = teams.filter(t => {
-      if (!liveEntryIds.length) return true;
-      const used = usedByAll[t.ab] || new Set();
-      return !liveEntryIds.every(id => used.has(id));
+      if (!aliveIds.length) return true;
+      const used = usedByOLEntry[t.ab] || new Set();
+      return !aliveIds.every(id => used.has(id));
     }).map(t => {
       const calibrated = calibrateScore(t.score, calibBuckets);
       // line-movement nudge: a positive lineMovement means the market has moved
@@ -2992,11 +3083,35 @@ async function ensureOnlyLossesPicks(wk) {
       return { ...t, calibratedWeight: finalWeight, pickContext };
     });
 
-    const picked = weightedPickTeams(eligibleTeams, wk.picks_required);
+    const picked = weightedPickTeams(eligibleTeams, olPicksRequired);
     if (!picked.length) return [];
 
     const rows = picked.map(t => ({ week_number: wk.week_number, team_abbr: t.ab, score: t.score, context: t.pickContext }));
     await sbUpsert("only_losses_picks", rows, "week_number,team_abbr");
+
+    // Assign the picks onto Only Losses' own alive entries — one team per
+    // entry, best-scored picks get first shot at any entry that hasn't used
+    // them before. The "+2" over entries_remaining is exactly the same
+    // buffer/depth idea as the humans' list — insurance against conflicts,
+    // not extra assignments.
+    if (olAliveEntries.length) {
+      const sorted = picked.slice().sort((a, b) => b.score - a.score);
+      const filled = new Set();
+      const assignRows = [];
+      for (const t of sorted) {
+        for (const e of olAliveEntries) {
+          if (filled.has(e.id)) continue;
+          const used = usedByOLEntry[t.ab] || new Set();
+          if (used.has(e.id)) continue;
+          assignRows.push({ week_number: wk.week_number, entry_id: e.id, team: t.ab, result: "pending" });
+          filled.add(e.id);
+          break;
+        }
+        if (filled.size === olAliveEntries.length) break;
+      }
+      if (assignRows.length) await sbUpsert("ol_assignments", assignRows, "week_number,entry_id").catch(() => {});
+    }
+
     return rows;
   } catch (e) {
     return [];   // Only Losses is a bonus mechanic; never block the board on it
@@ -3142,7 +3257,11 @@ async function computeOnlyLossesTally(reqByWeek) {
     for (const wkStr of Object.keys(byWeek)) {
       const wk = Number(wkStr);
       const picksThisWeek = byWeek[wk].slice().sort((a, b) => b.score - a.score);
-      const req = reqByWeek[wk] || picksThisWeek.length || 8;
+      // self-describing: Only Losses now has its own entries_remaining, which
+      // can differ from the humans' — the number of picks it actually made
+      // that week (its own list length) is the correct confidence denominator,
+      // not the humans' picks_required for that week.
+      const req = picksThisWeek.length || 8;
       const outcomes = await fetchWeekOutcomes(wk);
       const wkTally = { correct: 0, incorrect: 0, conf: 0 };
       picksThisWeek.forEach((p, idx) => {
@@ -3996,6 +4115,10 @@ async function commishTools(overlay) {
       await sb(`score_snapshots?season=eq.${CURRENT_SEASON}`, { method: "DELETE" }).catch(() => {});
       await sb(`only_losses_picks?id=gte.0`, { method: "DELETE" }).catch(() => {});
       await sb(`only_losses_results?id=gte.0`, { method: "DELETE" }).catch(() => {});
+      await sb(`ol_assignments?id=gte.0`, { method: "DELETE" }).catch(() => {});
+      await sb(`ol_entries?id=gte.0`, {
+        method: "PATCH", body: JSON.stringify({ status: "alive", died_week: null }),
+      }).catch(() => {});
       await sb(`weeks?id=gte.0`, { method: "DELETE" });
       await sb(`entries?id=gte.0`, {
         method: "PATCH", body: JSON.stringify({ status: "alive", died_week: null }),
