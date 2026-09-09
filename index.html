@@ -1113,14 +1113,15 @@
     font-family: 'Barlow Semi Condensed', sans-serif; font-weight: 700; font-size: 11px;
     letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-dim); margin-bottom: 8px;
   }
-  .ol-board-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 6px; }
+  .ol-board-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
   .ol-entry-row {
-    display: flex; justify-content: space-between; gap: 8px; font-size: 12px;
-    background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px;
+    display: flex; flex-direction: column; justify-content: flex-end; gap: 2px; font-size: 12px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px;
+    min-height: 140px;
   }
   .ol-entry-row.dead { opacity: 0.5; }
-  .ol-entry-id { color: var(--ink-faint); }
-  .ol-entry-team { font-weight: 600; }
+  .ol-entry-id { color: var(--ink-faint); font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .ol-entry-team { font-weight: 700; font-size: 13px; }
   .st-row-bot { border-left: 2px solid var(--gold); }
   .st-row-bot .st-name { font-style: italic; }
   .um-legend { margin-bottom: 14px; }
@@ -1350,6 +1351,18 @@ function entryPhotoBg(entryId, eliminated) {
 function entryCardBgStyle(entryId, eliminated) {
   const color = ENTRY_ACCENT_COLORS[(entryId - 1) % 6];
   return entryPhotoBg(entryId, eliminated) + ` border-left: 3px solid ${color};`;
+}
+
+// Background photo for one of Only Losses' OWN entries — same treatment as
+// the humans' entry photos, but a separate file set (ol-entry1.jpg..
+// ol-entry6.jpg, optionally ol-entry{N}-eliminated.jpg once that entry dies)
+// since these are a completely different set of 6 entries. A missing file
+// just leaves the tile looking plain, same graceful-fallback philosophy as
+// everywhere else.
+function olEntryPhotoBg(entryId, eliminated) {
+  const img = eliminated ? `ol-entry${entryId}-eliminated.jpg` : `ol-entry${entryId}.jpg`;
+  return `background-image: linear-gradient(160deg, rgba(19,24,32,0.86), rgba(19,24,32,0.72)), url('${img}'); ` +
+    `background-size: cover, contain; background-repeat: no-repeat; background-position: center;`;
 }
 
 
@@ -2234,7 +2247,7 @@ async function renderBoard(wk, headerHtml) {
         const rowsOl = (olEntries || []).map(e => {
           const team = teamByEntry[e.id];
           const dead = e.status === "dead";
-          return `<div class="ol-entry-row ${dead ? "dead" : ""}">
+          return `<div class="ol-entry-row ${dead ? "dead" : ""}" style="${olEntryPhotoBg(e.id, dead)}">
             <span class="ol-entry-id">Entry ${e.id}</span>
             <span class="ol-entry-team">${dead ? `Out Wk ${e.died_week ?? "?"}` : (team ? (TEAM_NAME[team] || team) : "—")}</span>
           </div>`;
