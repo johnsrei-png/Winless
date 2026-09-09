@@ -548,19 +548,10 @@
     min-height: 260px;
   }
   .entry-card.dead { opacity: 0.5; }
-  /* per-entry background photo, if uploaded — entry1.jpg..entry6.jpg next to
-     index.html, matched to the entry's real id (not display order). A dark
-     scrim sits between the photo and the text/controls so both stay readable
-     no matter what the photo looks like. If a given entryN.jpg hasn't been
-     uploaded yet, that layer simply doesn't render — the scrim + colored
-     border alone still look intentional, not broken. */
-  .entry-tint-1 { background-image: linear-gradient(160deg, rgba(19,24,32,0.86), rgba(19,24,32,0.72)), url('entry1.jpg'); background-size: cover, contain; background-repeat: no-repeat; background-position: center; border-left: 3px solid #4EA1F5; }
-  .entry-tint-2 { background-image: linear-gradient(160deg, rgba(19,24,32,0.86), rgba(19,24,32,0.72)), url('entry2.jpg'); background-size: cover, contain; background-repeat: no-repeat; background-position: center; border-left: 3px solid #A78BFA; }
-  .entry-tint-3 { background-image: linear-gradient(160deg, rgba(19,24,32,0.86), rgba(19,24,32,0.72)), url('entry3.jpg'); background-size: cover, contain; background-repeat: no-repeat; background-position: center; border-left: 3px solid #2DD4BF; }
-  .entry-tint-4 { background-image: linear-gradient(160deg, rgba(19,24,32,0.86), rgba(19,24,32,0.72)), url('entry4.jpg'); background-size: cover, contain; background-repeat: no-repeat; background-position: center; border-left: 3px solid #F472B6; }
-  .entry-tint-5 { background-image: linear-gradient(160deg, rgba(19,24,32,0.86), rgba(19,24,32,0.72)), url('entry5.jpg'); background-size: cover, contain; background-repeat: no-repeat; background-position: center; border-left: 3px solid #FB923C; }
-  .entry-tint-6 { background-image: linear-gradient(160deg, rgba(19,24,32,0.86), rgba(19,24,32,0.72)), url('entry6.jpg'); background-size: cover, contain; background-repeat: no-repeat; background-position: center; border-left: 3px solid #94A3B8; }
-  .entry-card.dead[class*="entry-tint"] { background: var(--panel); background-image: none; border-left-color: var(--line); }
+  /* per-entry background photo is applied inline via entryCardBgStyle() in JS
+     now (entry1.jpg..entry6.jpg, matched to id) — see that function for the
+     scrim/fallback details. Kept out of static CSS since the same helper
+     also drives the placed-summary cards and needs to compute per-entry. */
   .entry-head {
     display: flex; align-items: center; justify-content: space-between;
     margin-bottom: 10px;
@@ -1325,6 +1316,28 @@ function olBadgeSvg(size = 22) {
     <path d="M13 33 Q22 37 31 33" stroke="#ff4d3d" stroke-width="1.6" fill="none" stroke-linecap="round"/>
   </svg>`;
 }
+
+// Per-entry card background: a distinct accent color per entry, plus its
+// background photo (entry{N}.jpg) — or, once the entry is actually
+// eliminated (the picked team WON — the bad outcome), entry{N}-eliminated.jpg
+// instead. If an "eliminated" image hasn't been uploaded for that entry, it
+// just keeps showing the normal one rather than breaking.
+const ENTRY_ACCENT_COLORS = ["#4EA1F5", "#A78BFA", "#2DD4BF", "#F472B6", "#FB923C", "#94A3B8"];
+// Just the photo + scrim, no border — for contexts (like the placed-summary
+// cards) that already use border-left color to mean something else (this
+// week's actual result), so a decorative per-entry color would clobber it.
+function entryPhotoBg(entryId, eliminated) {
+  const img = eliminated ? `entry${entryId}-eliminated.jpg` : `entry${entryId}.jpg`;
+  return `background-image: linear-gradient(160deg, rgba(19,24,32,0.86), rgba(19,24,32,0.72)), url('${img}'); ` +
+    `background-size: cover, contain; background-repeat: no-repeat; background-position: center;`;
+}
+// Photo + scrim + the per-entry accent border — for contexts (like the Edit
+// Board) that don't already use border-left for something else.
+function entryCardBgStyle(entryId, eliminated) {
+  const color = ENTRY_ACCENT_COLORS[(entryId - 1) % 6];
+  return entryPhotoBg(entryId, eliminated) + ` border-left: 3px solid ${color};`;
+}
+
 
 // ESPN's API uses a few abbreviations that differ from this app's own team list
 // (e.g. Washington is "WSH" in ESPN's data but "WAS" everywhere in this app).
@@ -2150,7 +2163,7 @@ async function renderBoard(wk, headerHtml) {
       const result = asg?.result || "pending";
       const cls = dead ? "dead" : (result === "survived" ? "survived" : result === "eliminated" ? "eliminated" : "");
       return `
-        <div class="placed-card ${cls}">
+        <div class="placed-card ${cls}" style="${entryPhotoBg(e.id, dead)}">
           <div class="pid">
             <span class="pid-name" data-entry="${e.id}" title="Click to rename">${e.label || "Entry " + e.id}</span>
             <span class="pid-sub">Entry ${e.id}</span>
@@ -2202,9 +2215,8 @@ async function renderBoard(wk, headerHtml) {
     const dead = e.status === "dead";
     const used = [...(usedByEntry[e.id] || [])];
     const sel = thisWeek[e.id] || "";
-    const tint = `entry-tint-${((e.id - 1) % 6) + 1}`;
     boardHtml += `
-      <div class="entry-card ${tint} ${dead ? "dead" : ""}">
+      <div class="entry-card ${dead ? "dead" : ""}" style="${entryCardBgStyle(e.id, dead)}">
         <div class="entry-head">
           <div class="id">${e.label || "Entry " + e.id}</div>
           <div class="status-tag ${dead ? "dead" : "alive"}">${dead ? "Eliminated" : "Alive"}</div>
@@ -5664,30 +5676,48 @@ function renderEntryBoardDemo() {
   if (!body) return;
   const mockEntries = [
     { id: 1, label: "Entry 1", dead: false },
-    { id: 2, label: "Entry 2", dead: false },
+    { id: 2, label: "Entry 2", dead: true, died_week: 3 },
     { id: 3, label: "Entry 3", dead: false },
-    { id: 4, label: "Entry 4", dead: true, died_week: 3 },
+    { id: 4, label: "Entry 4", dead: false },
     { id: 5, label: "Entry 5", dead: false },
     { id: 6, label: "Entry 6", dead: false },
   ];
-  const cards = mockEntries.map(e => `
-    <div class="entry-card entry-tint-${((e.id - 1) % 6) + 1} ${e.dead ? "dead" : ""}">
-      <div class="entry-head">
-        <div class="id">${e.label}</div>
-        <div class="status-tag ${e.dead ? "dead" : "alive"}">${e.dead ? "Eliminated" : "Alive"}</div>
-      </div>
-      ${e.dead ? `<div class="entry-used">Knocked out in Week ${e.died_week}.</div>` : `
-        <div class="entry-assign">
-          <select class="entry-team unset" disabled><option>— assign a team —</option></select>
+
+  function render() {
+    const cards = mockEntries.map(e => `
+      <div class="entry-card" style="${entryCardBgStyle(e.id, e.dead)}">
+        <div class="entry-head">
+          <div class="id">${e.label}</div>
+          <div class="status-tag ${e.dead ? "dead" : "alive"}">${e.dead ? "Eliminated" : "Alive"}</div>
         </div>
-        <div class="entry-used"><b>Used:</b> <span style="color:var(--ink-faint)">none yet</span></div>`}
-    </div>`).join("");
+        ${e.dead ? `<div class="entry-used">Knocked out in Week ${e.died_week}.</div>` : `
+          <div class="entry-assign">
+            <select class="entry-team unset" disabled><option>— assign a team —</option></select>
+          </div>
+          <div class="entry-used"><b>Used:</b> <span style="color:var(--ink-faint)">none yet</span></div>`}
+        <button class="btn btn-ghost" style="margin-top:10px;font-size:11px;padding:6px 12px" data-entry="${e.id}">
+          ${e.dead ? "↩ Reset to alive" : "💀 Simulate: pick won (eliminated)"}
+        </button>
+      </div>`).join("");
+    document.getElementById("entryBoardDemoGrid").innerHTML = cards;
+    document.querySelectorAll("#entryBoardDemoGrid button[data-entry]").forEach(btn => {
+      btn.onclick = () => {
+        const entry = mockEntries.find(e => e.id === +btn.dataset.entry);
+        entry.dead = !entry.dead;
+        if (entry.dead) entry.died_week = 3;
+        render();
+      };
+    });
+  }
 
   body.innerHTML = `
-    <p class="hint" style="margin-bottom:20px">This is now live on the real Edit Board too — this page just uses
-      mock entries so you can preview it without touching real board data. Upload <b>entry1.jpg</b> through
-      <b>entry6.jpg</b> to your repo root (matched to entry id) to see them here and on the real board.</p>
-    <div class="board">${cards}</div>`;
+    <p class="hint" style="margin-bottom:20px">Testing an image swap: once an entry is <b>eliminated</b> (the
+      picked team WON — the bad outcome), it can show a different photo instead of the normal one. Click the
+      button on any card below to simulate that happening. Upload <b>entry1.jpg</b>..<b>entry6.jpg</b> (normal)
+      and optionally <b>entry1-eliminated.jpg</b>..<b>entry6-eliminated.jpg</b> (shown once knocked out) to your
+      repo root — if an "eliminated" image isn't uploaded for an entry, it just keeps showing the normal one.</p>
+    <div class="board" id="entryBoardDemoGrid"></div>`;
+  render();
 }
 
 function renderDragPickPrototype(wk, teams) {
