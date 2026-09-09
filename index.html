@@ -1646,7 +1646,10 @@ function nextTuesday5pmAfter(openedAt) {
   return candidate;
 }
 
-const LATE_PUZZLE_IMAGE = "latepuzzle.jpg";   // commit this file next to index.html
+// A pool of puzzle images — one is picked at random each time the gate
+// generates. Add more by extending this array and committing the matching
+// filenames next to index.html; any missing file just falls back gracefully.
+const LATE_PUZZLE_IMAGES = ["latepuzzle1.jpg", "latepuzzle2.jpg", "latepuzzle3.jpg"];
 const PUZZLE_GRID = 3;                        // 3x3 = 9 pieces
 
 function shuffledSlots(n) {
@@ -1668,11 +1671,12 @@ function shuffledSlots(n) {
 function renderPuzzleGate(wk, headerHtml) {
   const N = PUZZLE_GRID, total = N * N;
   let slots = shuffledSlots(total);
+  const chosenImage = LATE_PUZZLE_IMAGES[Math.floor(Math.random() * LATE_PUZZLE_IMAGES.length)];
 
   const pieceStyle = (contentIndex) => {
     const row = Math.floor(contentIndex / N), col = contentIndex % N;
     const pct = 100 / (N - 1);
-    return `background-image:url('${LATE_PUZZLE_IMAGE}');background-size:${N * 100}% ${N * 100}%;background-position:${col * pct}% ${row * pct}%;`;
+    return `background-image:url('${chosenImage}');background-size:${N * 100}% ${N * 100}%;background-position:${col * pct}% ${row * pct}%;`;
   };
   const checkSolved = () => slots.every((v, i) => v === i);
 
@@ -1746,10 +1750,11 @@ function renderPuzzleGate(wk, headerHtml) {
           Drag the pieces back into place to earn your way back in.</div>
         <div class="puzzle-frame">
           <div class="puzzle-grid" id="puzzlegrid"></div>
-          <img src="${LATE_PUZZLE_IMAGE}" alt="" style="display:none"
+          <img src="${chosenImage}" alt="" style="display:none"
             onerror="document.getElementById('puzzlemissing').style.display='flex';document.getElementById('puzzlegrid').style.display='none'">
-          <div class="puzzle-missing" id="puzzlemissing" style="display:none">No puzzle image yet. Commit a photo named
-            <b>${LATE_PUZZLE_IMAGE}</b> next to index.html in your repo.</div>
+          <div class="puzzle-missing" id="puzzlemissing" style="display:none">No puzzle image yet. Commit photos
+            named <b>${LATE_PUZZLE_IMAGES.join(", ")}</b> next to index.html in your repo — one gets picked at random
+            each time.</div>
         </div>
       </div>
     </div>`;
@@ -5430,11 +5435,12 @@ function renderPuzzleDemo() {
   if (!body) return;
   const N = PUZZLE_GRID, total = N * N;
   let slots = shuffledSlots(total);
+  let imageIdx = 0;
 
   const pieceStyle = (contentIndex) => {
     const row = Math.floor(contentIndex / N), col = contentIndex % N;
     const pct = 100 / (N - 1);
-    return `background-image:url('${LATE_PUZZLE_IMAGE}');background-size:${N * 100}% ${N * 100}%;background-position:${col * pct}% ${row * pct}%;`;
+    return `background-image:url('${LATE_PUZZLE_IMAGES[imageIdx]}');background-size:${N * 100}% ${N * 100}%;background-position:${col * pct}% ${row * pct}%;`;
   };
   const checkSolved = () => slots.every((v, i) => v === i);
 
@@ -5492,19 +5498,29 @@ function renderPuzzleDemo() {
     renderPieces();
   }
 
+  function nextImage() {
+    imageIdx = (imageIdx + 1) % LATE_PUZZLE_IMAGES.length;
+    document.getElementById("puzzleDemoImgName").textContent = LATE_PUZZLE_IMAGES[imageIdx];
+    reset();
+  }
+
   body.innerHTML = `
     <p class="hint" style="margin-bottom:16px">The exact same puzzle gate players see after missing the Tuesday
-      5pm deadline — play with it freely here. Nothing here touches real weeks or the puzzle-solved flag.</p>
+      5pm deadline — one image is picked at random each real time it triggers. Play with it freely here; nothing
+      touches real weeks or the puzzle-solved flag.</p>
     <div class="locked-card" style="max-width:440px">
       <div class="locked-sub" id="puzzleDemoStatus">Drag pieces to reassemble.</div>
       <div class="puzzle-frame">
         <div class="puzzle-grid" id="puzzleDemoGrid"></div>
       </div>
-      <div class="locked-actions" style="margin-top:16px">
-        <button class="btn btn-ghost" id="puzzleDemoReset">🔄 Reset puzzle</button>
+      <div style="font-size:11px;color:var(--ink-faint);margin-top:8px">Showing: <span id="puzzleDemoImgName">${LATE_PUZZLE_IMAGES[imageIdx]}</span></div>
+      <div class="locked-actions" style="margin-top:12px">
+        <button class="btn btn-ghost" id="puzzleDemoReset">🔄 Reset (same image)</button>
+        <button class="btn btn-lock" id="puzzleDemoNext">🖼️ Next image</button>
       </div>
     </div>`;
   document.getElementById("puzzleDemoReset").onclick = reset;
+  document.getElementById("puzzleDemoNext").onclick = nextImage;
   renderPieces();
 }
 
