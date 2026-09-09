@@ -545,22 +545,22 @@
     border: 1px solid var(--line);
     border-radius: 12px;
     padding: 14px 16px;
+    min-height: 260px;
   }
   .entry-card.dead { opacity: 0.5; }
-  /* sandbox-only preview classes for the per-entry background-photo idea —
-     kept here so the demo can reuse them, but NOT applied to the real Edit
-     Board yet. entry1.jpg..entry6.jpg next to index.html, matched to id.
-     A dark scrim sits between the photo and the text so both stay readable
-     no matter what the photo looks like; a missing file just doesn't render
-     that layer rather than breaking anything. */
-  .sbx-entry-card { min-height: 260px; }
-  .sbx-entry-tint-1 { background-image: linear-gradient(160deg, rgba(19,24,32,0.86), rgba(19,24,32,0.72)), url('entry1.jpg'); background-size: cover, contain; background-repeat: no-repeat; background-position: center; border-left: 3px solid #4EA1F5; }
-  .sbx-entry-tint-2 { background-image: linear-gradient(160deg, rgba(19,24,32,0.86), rgba(19,24,32,0.72)), url('entry2.jpg'); background-size: cover, contain; background-repeat: no-repeat; background-position: center; border-left: 3px solid #A78BFA; }
-  .sbx-entry-tint-3 { background-image: linear-gradient(160deg, rgba(19,24,32,0.86), rgba(19,24,32,0.72)), url('entry3.jpg'); background-size: cover, contain; background-repeat: no-repeat; background-position: center; border-left: 3px solid #2DD4BF; }
-  .sbx-entry-tint-4 { background-image: linear-gradient(160deg, rgba(19,24,32,0.86), rgba(19,24,32,0.72)), url('entry4.jpg'); background-size: cover, contain; background-repeat: no-repeat; background-position: center; border-left: 3px solid #F472B6; }
-  .sbx-entry-tint-5 { background-image: linear-gradient(160deg, rgba(19,24,32,0.86), rgba(19,24,32,0.72)), url('entry5.jpg'); background-size: cover, contain; background-repeat: no-repeat; background-position: center; border-left: 3px solid #FB923C; }
-  .sbx-entry-tint-6 { background-image: linear-gradient(160deg, rgba(19,24,32,0.86), rgba(19,24,32,0.72)), url('entry6.jpg'); background-size: cover, contain; background-repeat: no-repeat; background-position: center; border-left: 3px solid #94A3B8; }
-  .entry-card.dead[class*="sbx-entry-tint"] { background: var(--panel); background-image: none; border-left-color: var(--line); }
+  /* per-entry background photo, if uploaded — entry1.jpg..entry6.jpg next to
+     index.html, matched to the entry's real id (not display order). A dark
+     scrim sits between the photo and the text/controls so both stay readable
+     no matter what the photo looks like. If a given entryN.jpg hasn't been
+     uploaded yet, that layer simply doesn't render — the scrim + colored
+     border alone still look intentional, not broken. */
+  .entry-tint-1 { background-image: linear-gradient(160deg, rgba(19,24,32,0.86), rgba(19,24,32,0.72)), url('entry1.jpg'); background-size: cover, contain; background-repeat: no-repeat; background-position: center; border-left: 3px solid #4EA1F5; }
+  .entry-tint-2 { background-image: linear-gradient(160deg, rgba(19,24,32,0.86), rgba(19,24,32,0.72)), url('entry2.jpg'); background-size: cover, contain; background-repeat: no-repeat; background-position: center; border-left: 3px solid #A78BFA; }
+  .entry-tint-3 { background-image: linear-gradient(160deg, rgba(19,24,32,0.86), rgba(19,24,32,0.72)), url('entry3.jpg'); background-size: cover, contain; background-repeat: no-repeat; background-position: center; border-left: 3px solid #2DD4BF; }
+  .entry-tint-4 { background-image: linear-gradient(160deg, rgba(19,24,32,0.86), rgba(19,24,32,0.72)), url('entry4.jpg'); background-size: cover, contain; background-repeat: no-repeat; background-position: center; border-left: 3px solid #F472B6; }
+  .entry-tint-5 { background-image: linear-gradient(160deg, rgba(19,24,32,0.86), rgba(19,24,32,0.72)), url('entry5.jpg'); background-size: cover, contain; background-repeat: no-repeat; background-position: center; border-left: 3px solid #FB923C; }
+  .entry-tint-6 { background-image: linear-gradient(160deg, rgba(19,24,32,0.86), rgba(19,24,32,0.72)), url('entry6.jpg'); background-size: cover, contain; background-repeat: no-repeat; background-position: center; border-left: 3px solid #94A3B8; }
+  .entry-card.dead[class*="entry-tint"] { background: var(--panel); background-image: none; border-left-color: var(--line); }
   .entry-head {
     display: flex; align-items: center; justify-content: space-between;
     margin-bottom: 10px;
@@ -2202,8 +2202,9 @@ async function renderBoard(wk, headerHtml) {
     const dead = e.status === "dead";
     const used = [...(usedByEntry[e.id] || [])];
     const sel = thisWeek[e.id] || "";
+    const tint = `entry-tint-${((e.id - 1) % 6) + 1}`;
     boardHtml += `
-      <div class="entry-card ${dead ? "dead" : ""}">
+      <div class="entry-card ${tint} ${dead ? "dead" : ""}">
         <div class="entry-head">
           <div class="id">${e.label || "Entry " + e.id}</div>
           <div class="status-tag ${dead ? "dead" : "alive"}">${dead ? "Eliminated" : "Alive"}</div>
@@ -5670,7 +5671,7 @@ function renderEntryBoardDemo() {
     { id: 6, label: "Entry 6", dead: false },
   ];
   const cards = mockEntries.map(e => `
-    <div class="entry-card sbx-entry-card sbx-entry-tint-${((e.id - 1) % 6) + 1} ${e.dead ? "dead" : ""}">
+    <div class="entry-card entry-tint-${((e.id - 1) % 6) + 1} ${e.dead ? "dead" : ""}">
       <div class="entry-head">
         <div class="id">${e.label}</div>
         <div class="status-tag ${e.dead ? "dead" : "alive"}">${e.dead ? "Eliminated" : "Alive"}</div>
@@ -5683,9 +5684,9 @@ function renderEntryBoardDemo() {
     </div>`).join("");
 
   body.innerHTML = `
-    <p class="hint" style="margin-bottom:20px">Preview of per-entry background photos on the Edit Board — mock
-      entries, not real ones. Upload <b>entry1.jpg</b> through <b>entry6.jpg</b> to your repo root to see them
-      here (matched to entry id). Nothing on this screen touches real board data.</p>
+    <p class="hint" style="margin-bottom:20px">This is now live on the real Edit Board too — this page just uses
+      mock entries so you can preview it without touching real board data. Upload <b>entry1.jpg</b> through
+      <b>entry6.jpg</b> to your repo root (matched to entry id) to see them here and on the real board.</p>
     <div class="board">${cards}</div>`;
 }
 
