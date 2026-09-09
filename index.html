@@ -553,12 +553,12 @@
      no matter what the photo looks like. If a given entryN.jpg hasn't been
      uploaded yet, that layer simply doesn't render — the scrim + colored
      border alone still look intentional, not broken. */
-  .entry-tint-1 { background-image: linear-gradient(160deg, rgba(19,24,32,0.86), rgba(19,24,32,0.72)), url('entry1.jpg'); background-size: cover; background-position: center; border-left: 3px solid #4EA1F5; }
-  .entry-tint-2 { background-image: linear-gradient(160deg, rgba(19,24,32,0.86), rgba(19,24,32,0.72)), url('entry2.jpg'); background-size: cover; background-position: center; border-left: 3px solid #A78BFA; }
-  .entry-tint-3 { background-image: linear-gradient(160deg, rgba(19,24,32,0.86), rgba(19,24,32,0.72)), url('entry3.jpg'); background-size: cover; background-position: center; border-left: 3px solid #2DD4BF; }
-  .entry-tint-4 { background-image: linear-gradient(160deg, rgba(19,24,32,0.86), rgba(19,24,32,0.72)), url('entry4.jpg'); background-size: cover; background-position: center; border-left: 3px solid #F472B6; }
-  .entry-tint-5 { background-image: linear-gradient(160deg, rgba(19,24,32,0.86), rgba(19,24,32,0.72)), url('entry5.jpg'); background-size: cover; background-position: center; border-left: 3px solid #FB923C; }
-  .entry-tint-6 { background-image: linear-gradient(160deg, rgba(19,24,32,0.86), rgba(19,24,32,0.72)), url('entry6.jpg'); background-size: cover; background-position: center; border-left: 3px solid #94A3B8; }
+  .entry-tint-1 { background-image: linear-gradient(160deg, rgba(19,24,32,0.86), rgba(19,24,32,0.72)), url('entry1.jpg'); background-size: cover, contain; background-repeat: no-repeat; background-position: center; border-left: 3px solid #4EA1F5; }
+  .entry-tint-2 { background-image: linear-gradient(160deg, rgba(19,24,32,0.86), rgba(19,24,32,0.72)), url('entry2.jpg'); background-size: cover, contain; background-repeat: no-repeat; background-position: center; border-left: 3px solid #A78BFA; }
+  .entry-tint-3 { background-image: linear-gradient(160deg, rgba(19,24,32,0.86), rgba(19,24,32,0.72)), url('entry3.jpg'); background-size: cover, contain; background-repeat: no-repeat; background-position: center; border-left: 3px solid #2DD4BF; }
+  .entry-tint-4 { background-image: linear-gradient(160deg, rgba(19,24,32,0.86), rgba(19,24,32,0.72)), url('entry4.jpg'); background-size: cover, contain; background-repeat: no-repeat; background-position: center; border-left: 3px solid #F472B6; }
+  .entry-tint-5 { background-image: linear-gradient(160deg, rgba(19,24,32,0.86), rgba(19,24,32,0.72)), url('entry5.jpg'); background-size: cover, contain; background-repeat: no-repeat; background-position: center; border-left: 3px solid #FB923C; }
+  .entry-tint-6 { background-image: linear-gradient(160deg, rgba(19,24,32,0.86), rgba(19,24,32,0.72)), url('entry6.jpg'); background-size: cover, contain; background-repeat: no-repeat; background-position: center; border-left: 3px solid #94A3B8; }
   .entry-card.dead[class*="entry-tint"] { background: var(--panel); background-image: none; border-left-color: var(--line); }
   .entry-head {
     display: flex; align-items: center; justify-content: space-between;
