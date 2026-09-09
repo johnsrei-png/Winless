@@ -3031,10 +3031,55 @@ async function resolveOLEntries() {
 // season, entries survive or die) but entirely independent: its own entries,
 // its own usage history, its own entries_remaining that can diverge from the
 // humans' over the course of the season.
+// Shared by fresh pick generation and the retroactive-assignment path below:
+// greedily fills Only Losses' alive entries with its best-scored picks first,
+// skipping to the next-best available pick whenever an entry has already
+// used the top choice. Writes ol_assignments rows for the week.
+async function assignPicksToOLEntries(wk, pickedTeams, olAliveEntries, usedByOLEntry) {
+  if (!olAliveEntries.length || !pickedTeams.length) return;
+  const sorted = pickedTeams.slice().sort((a, b) => b.score - a.score);
+  const filled = new Set();
+  const assignRows = [];
+  for (const t of sorted) {
+    for (const e of olAliveEntries) {
+      if (filled.has(e.id)) continue;
+      const used = usedByOLEntry[t.ab] || new Set();
+      if (used.has(e.id)) continue;
+      assignRows.push({ week_number: wk.week_number, entry_id: e.id, team: t.ab, result: "pending" });
+      filled.add(e.id);
+      break;
+    }
+    if (filled.size === olAliveEntries.length) break;
+  }
+  if (assignRows.length) await sbUpsert("ol_assignments", assignRows, "week_number,entry_id").catch(() => {});
+}
+
 async function ensureOnlyLossesPicks(wk) {
   try {
     const existing = await sbGet(`only_losses_picks?week_number=eq.${wk.week_number}`);
-    if (existing && existing.length) return existing;   // already generated for this week
+    if (existing && existing.length) {
+      // Picks already exist for this week — but if they predate the entry-board
+      // feature (or the assignment step failed silently before), they might
+      // never have been assigned onto Only Losses' own board. Check for that
+      // and backfill the assignment using these SAME picks, rather than
+      // regenerating new ones.
+      const existingAssigns = await sbGet(`ol_assignments?week_number=eq.${wk.week_number}`).catch(() => []);
+      if (!existingAssigns || !existingAssigns.length) {
+        try {
+          await resolveOLEntries();
+          const [olEntries, olAssigns] = await Promise.all([
+            ensureOLEntries(),
+            sbGet(`ol_assignments?order=week_number.asc`).catch(() => []),
+          ]);
+          const olAliveEntries = (olEntries || []).filter(e => e.status !== "dead");
+          const usedByOLEntry = {};
+          (olAssigns || []).forEach(a => { (usedByOLEntry[a.team] ||= new Set()).add(a.entry_id); });
+          const pickedForAssign = existing.map(p => ({ ab: p.team_abbr, score: p.score }));
+          await assignPicksToOLEntries(wk, pickedForAssign, olAliveEntries, usedByOLEntry);
+        } catch (e) { /* backfill is best-effort; picks still return fine either way */ }
+      }
+      return existing;
+    }
 
     await resolveOLEntries();   // make sure alive/dead status is current before deciding entries_remaining
     const [teams, olEntries, olAssigns, accResolved, sharpness] = await Promise.all([
@@ -3094,23 +3139,7 @@ async function ensureOnlyLossesPicks(wk) {
     // them before. The "+2" over entries_remaining is exactly the same
     // buffer/depth idea as the humans' list — insurance against conflicts,
     // not extra assignments.
-    if (olAliveEntries.length) {
-      const sorted = picked.slice().sort((a, b) => b.score - a.score);
-      const filled = new Set();
-      const assignRows = [];
-      for (const t of sorted) {
-        for (const e of olAliveEntries) {
-          if (filled.has(e.id)) continue;
-          const used = usedByOLEntry[t.ab] || new Set();
-          if (used.has(e.id)) continue;
-          assignRows.push({ week_number: wk.week_number, entry_id: e.id, team: t.ab, result: "pending" });
-          filled.add(e.id);
-          break;
-        }
-        if (filled.size === olAliveEntries.length) break;
-      }
-      if (assignRows.length) await sbUpsert("ol_assignments", assignRows, "week_number,entry_id").catch(() => {});
-    }
+    await assignPicksToOLEntries(wk, picked, olAliveEntries, usedByOLEntry);
 
     return rows;
   } catch (e) {
