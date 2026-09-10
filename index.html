@@ -1107,6 +1107,14 @@
     padding: 6px 10px; font-size: 13px; color: var(--ink);
   }
   .ol-chip b { color: var(--gold); font-family: 'Barlow Semi Condensed', sans-serif; }
+  .ol-chip.pick-wrong {
+    border-color: var(--alert); background: rgba(255,77,61,0.10);
+    text-decoration: line-through; text-decoration-color: var(--alert); text-decoration-thickness: 2px;
+    opacity: 0.8;
+  }
+  .ol-chip.pick-wrong b { color: var(--alert); }
+  .ol-chip.pick-right { border-color: var(--live); background: rgba(53,208,127,0.08); }
+  .ol-chip.pick-right b { color: var(--live); }
   .ol-note { font-size: 12px; color: var(--ink-faint); line-height: 1.5; margin: 0; }
   .ol-board { margin: 4px 0 14px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
   .ol-board-head {
@@ -2226,13 +2234,25 @@ async function renderBoard(wk, headerHtml) {
   // picks are already locked by this point.
   let olHtml = "";
   try {
-    const [olPicks, trashTalk] = await Promise.all([
+    const [olPicks, trashTalk, weekOutcomes] = await Promise.all([
       ensureOnlyLossesPicks(wk),
       onlyLossesTrashTalk(),
+      fetchWeekOutcomes(wk.week_number).catch(() => ({})),
     ]);
     if (olPicks && olPicks.length) {
       const chips = olPicks.slice().sort((a, b) => b.score - a.score)
-        .map(p => `<span class="ol-chip" data-ab="${p.team_abbr}">${TEAM_NAME[p.team_abbr] || p.team_abbr} <b>${p.score}</b></span>`).join("");
+        .map(p => {
+          const outcome = weekOutcomes[p.team_abbr];
+          // pick "loses" (fails) if the team WON or TIED — same grading rule
+          // used everywhere else in the app — regardless of whether this
+          // particular pick ended up assigned to one of Only Losses' own
+          // entries. A team that actually LOST is a correct pick.
+          const wrong = outcome === "won" || outcome === "tied";
+          const right = outcome === "lost";
+          const cls = wrong ? "pick-wrong" : right ? "pick-right" : "";
+          const mark = wrong ? "✗ " : right ? "✓ " : "";
+          return `<span class="ol-chip ${cls}" data-ab="${p.team_abbr}">${mark}${TEAM_NAME[p.team_abbr] || p.team_abbr} <b>${p.score}</b></span>`;
+        }).join("");
 
       // Only Losses' own entry board — same survive/die rules as the humans',
       // entirely separate entries. Show this week's assignments + every
