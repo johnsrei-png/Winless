@@ -5925,6 +5925,7 @@ function renderPeelDemo() {
 function renderEntryBoardDemo() {
   const body = document.getElementById("sandboxbody");
   if (!body) return;
+  const source = window._entryDemoSource || "yours";   // "yours" | "ol"
   const mockEntries = [
     { id: 1, label: "Entry 1", dead: false },
     { id: 2, label: "Entry 2", dead: true, died_week: 3 },
@@ -5935,23 +5936,43 @@ function renderEntryBoardDemo() {
   ];
 
   function render() {
-    const cards = mockEntries.map(e => `
-      <div class="entry-card" style="${entryCardBgStyle(e.id, e.dead)}">
-        <div class="entry-head">
-          <div class="id">${e.label}</div>
-          <div class="status-tag ${e.dead ? "dead" : "alive"}">${e.dead ? "Eliminated" : "Alive"}</div>
-        </div>
-        ${e.dead ? `<div class="entry-used">Knocked out in Week ${e.died_week}.</div>` : `
-          <div class="entry-assign">
-            <select class="entry-team unset" disabled><option>— assign a team —</option></select>
+    const bgFn = source === "ol" ? olEntryPhotoBg : entryCardBgStyle;
+    const cardClass = source === "ol" ? "ol-entry-row" : "entry-card";
+    const cards = mockEntries.map(e => {
+      if (source === "ol") {
+        // Only Losses' own tiles are simpler (no team dropdown/used-list) —
+        // match that layout so the preview looks like the real thing. Tile
+        // and button share a wrapper so the grid stays aligned per-entry.
+        return `<div>
+          <div class="${cardClass}" style="${bgFn(e.id, e.dead)}">
+            <span class="ol-entry-id">${e.label}</span>
+            <span class="ol-entry-team">${e.dead ? `Out Wk ${e.died_week}` : "Cardinals"}</span>
           </div>
-          <div class="entry-used"><b>Used:</b> <span style="color:var(--ink-faint)">none yet</span></div>`}
-        <button class="btn btn-ghost" style="margin-top:10px;font-size:11px;padding:6px 12px" data-entry="${e.id}">
-          ${e.dead ? "↩ Reset to alive" : "💀 Simulate: pick won (eliminated)"}
-        </button>
-      </div>`).join("");
-    document.getElementById("entryBoardDemoGrid").innerHTML = cards;
-    document.querySelectorAll("#entryBoardDemoGrid button[data-entry]").forEach(btn => {
+          <button class="btn btn-ghost" style="margin:6px 0 0;font-size:11px;padding:6px 12px;width:100%" data-entry="${e.id}">
+            ${e.dead ? "↩ Reset" : "💀 Eliminate"}
+          </button>
+        </div>`;
+      }
+      return `
+        <div class="${cardClass}" style="${bgFn(e.id, e.dead)}">
+          <div class="entry-head">
+            <div class="id">${e.label}</div>
+            <div class="status-tag ${e.dead ? "dead" : "alive"}">${e.dead ? "Eliminated" : "Alive"}</div>
+          </div>
+          ${e.dead ? `<div class="entry-used">Knocked out in Week ${e.died_week}.</div>` : `
+            <div class="entry-assign">
+              <select class="entry-team unset" disabled><option>— assign a team —</option></select>
+            </div>
+            <div class="entry-used"><b>Used:</b> <span style="color:var(--ink-faint)">none yet</span></div>`}
+          <button class="btn btn-ghost" style="margin-top:10px;font-size:11px;padding:6px 12px" data-entry="${e.id}">
+            ${e.dead ? "↩ Reset to alive" : "💀 Simulate: pick won (eliminated)"}
+          </button>
+        </div>`;
+    }).join("");
+    const grid = document.getElementById("entryBoardDemoGrid");
+    grid.className = source === "ol" ? "ol-board-grid" : "board";
+    grid.innerHTML = cards;
+    grid.querySelectorAll("button[data-entry]").forEach(btn => {
       btn.onclick = () => {
         const entry = mockEntries.find(e => e.id === +btn.dataset.entry);
         entry.dead = !entry.dead;
@@ -5962,12 +5983,20 @@ function renderEntryBoardDemo() {
   }
 
   body.innerHTML = `
+    <div class="bl-controls" style="margin-bottom:16px;max-width:360px">
+      <button class="bl-sort ${source === "yours" ? "active" : ""}" id="srcYours">Your entries</button>
+      <button class="bl-sort ${source === "ol" ? "active" : ""}" id="srcOL">Only Losses' entries</button>
+    </div>
     <p class="hint" style="margin-bottom:20px">Testing an image swap: once an entry is <b>eliminated</b> (the
       picked team WON — the bad outcome), it can show a different photo instead of the normal one. Click the
-      button on any card below to simulate that happening. Upload <b>entry1.jpg</b>..<b>entry6.jpg</b> (normal)
-      and optionally <b>entry1-eliminated.jpg</b>..<b>entry6-eliminated.jpg</b> (shown once knocked out) to your
-      repo root — if an "eliminated" image isn't uploaded for an entry, it just keeps showing the normal one.</p>
-    <div class="board" id="entryBoardDemoGrid"></div>`;
+      button on any tile below to simulate that happening.
+      ${source === "ol"
+        ? `Reads <b>ol-entry1.jpg</b>..<b>ol-entry6.jpg</b> (normal) and <b>ol-entry1-eliminated.jpg</b>..<b>ol-entry6-eliminated.jpg</b> (eliminated).`
+        : `Reads <b>entry1.jpg</b>..<b>entry6.jpg</b> (normal) and <b>entry1-eliminated.jpg</b>..<b>entry6-eliminated.jpg</b> (eliminated).`}
+      A missing image just keeps showing whichever one IS uploaded — nothing breaks either way.</p>
+    <div id="entryBoardDemoGrid"></div>`;
+  document.getElementById("srcYours").onclick = () => { window._entryDemoSource = "yours"; renderEntryBoardDemo(); };
+  document.getElementById("srcOL").onclick = () => { window._entryDemoSource = "ol"; renderEntryBoardDemo(); };
   render();
 }
 
