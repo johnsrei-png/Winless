@@ -3122,6 +3122,10 @@ async function assignPicksToOLEntries(wk, pickedTeams, olAliveEntries, usedByOLE
 
 async function ensureOnlyLossesPicks(wk) {
   try {
+    await resolveOLEntries();   // ALWAYS check for newly-finished games first — this was
+                                 // previously only happening during a one-time backfill and
+                                 // never again once assignments existed, so entries silently
+                                 // stopped updating after the first check.
     const existing = await sbGet(`only_losses_picks?week_number=eq.${wk.week_number}`);
     if (existing && existing.length) {
       // Picks already exist for this week — but if they predate the entry-board
@@ -3132,7 +3136,6 @@ async function ensureOnlyLossesPicks(wk) {
       const existingAssigns = await sbGet(`ol_assignments?week_number=eq.${wk.week_number}`).catch(() => []);
       if (!existingAssigns || !existingAssigns.length) {
         try {
-          await resolveOLEntries();
           const [olEntries, olAssigns] = await Promise.all([
             ensureOLEntries(),
             sbGet(`ol_assignments?order=week_number.asc`).catch(() => []),
@@ -3147,7 +3150,6 @@ async function ensureOnlyLossesPicks(wk) {
       return existing;
     }
 
-    await resolveOLEntries();   // make sure alive/dead status is current before deciding entries_remaining
     const [teams, olEntries, olAssigns, accResolved, sharpness] = await Promise.all([
       computeBestLoserScores(wk.week_number).catch(() => []),
       ensureOLEntries(),
@@ -4038,6 +4040,25 @@ async function commishTools(overlay) {
     </div>
 
     <div class="modal-section">
+      <h3>Manually mark an entry dead or alive</h3>
+      <p>Overrides the automatic result check — use this if a game's finished but the entry's tile hasn't
+        updated yet. Changes are shared: everyone sees the same status once you toggle it, same as if it
+        resolved automatically.</p>
+      <div class="pw-reset-row">
+        <select id="manualEntrySel" class="pw-input">
+          <optgroup label="Your Entries">
+            ${[1,2,3,4,5,6].map(n => `<option value="human-${n}">Entry ${n}</option>`).join("")}
+          </optgroup>
+          <optgroup label="Only Losses' Entries">
+            ${[1,2,3,4,5,6].map(n => `<option value="ol-${n}">OL Entry ${n}</option>`).join("")}
+          </optgroup>
+        </select>
+        <button class="btn btn-ghost" id="manualToggleBtn">Toggle dead/alive</button>
+      </div>
+      <span class="msg" id="manualToggleMsg"></span>
+    </div>
+
+    <div class="modal-section">
       <h3>Test the peel mechanic</h3>
       <p>Peels one random tile for real — same code path players use (image reveal, tap, money popup) — so you
         can confirm it's actually working. Logged under "Week 0" so it's easy to spot. <b>Reshuffle below when
@@ -4077,6 +4098,37 @@ async function commishTools(overlay) {
       </div>
       <span class="msg" id="resetmsg"></span>
     </div>`;
+
+  // manual entry-status override — a shared fallback for when automatic
+  // resolution hasn't caught up yet, for either entry set
+  modal.querySelector("#manualToggleBtn").onclick = async () => {
+    const msg = modal.querySelector("#manualToggleMsg");
+    const [kind, idStr] = modal.querySelector("#manualEntrySel").value.split("-");
+    const id = +idStr;
+    const table = kind === "ol" ? "ol_entries" : "entries";
+    const label = kind === "ol" ? `OL Entry ${id}` : `Entry ${id}`;
+    msg.className = "msg"; msg.textContent = "Checking…";
+    try {
+      const rows = await sbGet(`${table}?id=eq.${id}`);
+      const row = rows && rows[0];
+      if (!row) throw new Error("entry not found");
+      const goingDead = row.status !== "dead";
+      let diedWeek = row.died_week;
+      if (goingDead) {
+        const latestWeeks = await sbGet(`weeks?order=week_number.desc&limit=1`).catch(() => []);
+        diedWeek = (latestWeeks && latestWeeks[0]) ? latestWeeks[0].week_number : (diedWeek ?? 1);
+      } else {
+        diedWeek = null;
+      }
+      await sb(`${table}?id=eq.${id}`, {
+        method: "PATCH", body: JSON.stringify({ status: goingDead ? "dead" : "alive", died_week: diedWeek }),
+      });
+      msg.className = "msg ok";
+      msg.textContent = `${label} marked ${goingDead ? `dead (Week ${diedWeek})` : "alive"}.`;
+    } catch (e) {
+      msg.className = "msg err"; msg.textContent = "Couldn't update: " + e.message;
+    }
+  };
 
   // test peel — a real peel (image/tap/money code path) logged under week 0 so it's obviously a test
   modal.querySelector("#testpeel").onclick = async () => {
