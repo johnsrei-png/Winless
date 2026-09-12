@@ -3217,6 +3217,13 @@ async function ensureOnlyLossesPicks(wk) {
 
 // Resolve any weeks where Only Losses' picks (and everyone's own picks) are
 // fully graded, record the result, and — on a sweep — add $5/player to the pot.
+// Full-trust threshold for the sweep-comparison shrinkage below — a week with
+// this many picks or more gets its rate trusted at face value; fewer picks
+// means proportionally more pull toward a neutral 50%. 8 matches the highest
+// realistic weekly pick count (6 alive entries + 2), so shrinkage phases in
+// smoothly across the whole range an entry count can actually take.
+const OL_SWEEP_FULL_TRUST_PICKS = 8;
+
 async function computeOnlyLosses() {
   let results = [];
   try {
@@ -3238,18 +3245,50 @@ async function computeOnlyLosses() {
       // require an outcome for every OL pick before resolving this week
       if (myPicks.some(p => !outcomes[p.team_abbr])) continue;
 
+      const olTotal = myPicks.length;
       const olCorrect = myPicks.filter(p => outcomes[p.team_abbr] === "lost").length;
-      const playerCorrect = {};
-      PLAYERS.forEach(p => playerCorrect[p.id] = 0);
-      weekPicks.forEach(p => { if (p.result === "correct" && playerCorrect[p.player_id] != null) playerCorrect[p.player_id]++; });
+      const olRate = olTotal > 0 ? olCorrect / olTotal : 0;
 
-      const swept = PLAYERS.every(p => olCorrect > (playerCorrect[p.id] || 0));
+      // Only Losses now runs its own independent entry count, so its weekly
+      // pick total can genuinely differ from the humans' (who always submit
+      // the same length list as each other). Comparing raw correct counts
+      // would then quietly favor whoever simply has more picks that week —
+      // nothing to do with who actually predicted better. Compare hit RATE
+      // instead, which stays fair regardless of list length: a perfect 5-for-5
+      // week should beat a 6-for-8 week, even though 6 > 5.
+      const playerCorrect = {}; const playerTotal = {};
+      PLAYERS.forEach(p => { playerCorrect[p.id] = 0; playerTotal[p.id] = 0; });
+      weekPicks.forEach(p => {
+        if (playerTotal[p.player_id] != null) playerTotal[p.player_id]++;
+        if (p.result === "correct" && playerCorrect[p.player_id] != null) playerCorrect[p.player_id]++;
+      });
+      const playerRate = {};
+      PLAYERS.forEach(p => { playerRate[p.id] = playerTotal[p.id] > 0 ? playerCorrect[p.id] / playerTotal[p.id] : 0; });
+
+      // Rate alone still isn't quite fair: a tiny sample going perfect (3-for-3)
+      // isn't real evidence of anything the way a bigger near-perfect sample
+      // (5-for-6) is — it might just be luck. Shrink each side's rate toward a
+      // neutral 50% baseline in proportion to how few picks it made, same
+      // "trust grows with sample size" idea already used for the power ratings
+      // and score calibration elsewhere in this app. At a full 8-pick week this
+      // is a no-op (reduces to the plain rate); at 2-3 picks it pulls hard
+      // toward 50%, so a small perfect week can no longer trivially beat a
+      // larger, more solid one.
+      const shrunkRate = (correct, total) => {
+        if (!total) return 0.5;
+        const raw = correct / total;
+        const trust = Math.min(1, total / OL_SWEEP_FULL_TRUST_PICKS);
+        return raw * trust + 0.5 * (1 - trust);
+      };
+      const olAdjRate = shrunkRate(olCorrect, olTotal);
+      const swept = PLAYERS.every(p => olAdjRate > shrunkRate(playerCorrect[p.id], playerTotal[p.id]));
 
       try {
         await sb("only_losses_results", {
           method: "POST",
           body: JSON.stringify({
-            week_number: wk, ol_correct: olCorrect, player_correct: playerCorrect, swept,
+            week_number: wk, ol_correct: olCorrect, ol_total: olTotal,
+            player_correct: playerCorrect, player_total: playerTotal, swept,
           }),
         });
         if (swept) {
@@ -3260,7 +3299,7 @@ async function computeOnlyLosses() {
             }))),
           });
         }
-        results.push({ week_number: wk, ol_correct: olCorrect, player_correct: playerCorrect, swept });
+        results.push({ week_number: wk, ol_correct: olCorrect, ol_total: olTotal, player_correct: playerCorrect, player_total: playerTotal, swept });
       } catch (e) { /* try again next visit */ }
     }
   } catch (e) { /* Only Losses history is a bonus; standings still render without it */ }
@@ -3680,10 +3719,21 @@ async function renderStandings() {
     const sweepCount = olResults.filter(r => r.swept).length;
     const nameOf2 = id => PLAYERS.find(p => p.id === id)?.name || id;
     const rowsOl = olResults.slice().reverse().map(r => {
-      const perPlayer = PLAYERS.map(p => `${nameOf2(p.id)} ${r.player_correct?.[p.id] ?? "—"}`).join(" · ");
+      // show the rate ("X/Y (Z%)") so a sweep genuinely makes sense at a glance
+      // even when pick counts differ — older weeks predating this field just
+      // fall back to the plain count.
+      const olPct = r.ol_total ? Math.round((r.ol_correct / r.ol_total) * 100) : null;
+      const olTxt = olPct != null ? `${r.ol_correct}/${r.ol_total} (${olPct}%)` : `${r.ol_correct} correct`;
+      const perPlayer = PLAYERS.map(p => {
+        const c = r.player_correct?.[p.id];
+        if (c == null) return `${nameOf2(p.id)} —`;
+        const t = r.player_total?.[p.id];
+        const pct = t ? Math.round((c / t) * 100) : null;
+        return pct != null ? `${nameOf2(p.id)} ${c}/${t} (${pct}%)` : `${nameOf2(p.id)} ${c}`;
+      }).join(" · ");
       return `<div class="st-row" style="grid-template-columns:70px 1fr 90px">
         <div class="st-name">Wk ${r.week_number}</div>
-        <div style="font-size:13px;color:var(--ink-dim)">${olBadgeSvg(15)} ${r.ol_correct} correct — ${perPlayer}</div>
+        <div style="font-size:13px;color:var(--ink-dim)">${olBadgeSvg(15)} ${olTxt} — ${perPlayer}</div>
         <div class="st-val ${r.swept ? "acc-off" : ""}">${r.swept ? "SWEPT 💀" : "safe"}</div>
       </div>`;
     }).join("");
@@ -3697,10 +3747,13 @@ async function renderStandings() {
             </div>
             ${rowsOl}
           </div>
-          <p class="field-note">Only Losses picks the same number of teams you do each week, from the same
-            eligible pool, revealed once the week locks. It beats you only if its correct count is strictly
-            higher than <b>all three</b> of you — a sweep costs each player $5 into the season pot.
-            ${sweepCount} sweep${sweepCount !== 1 ? "s" : ""} so far this season.</p>`
+          <p class="field-note">Only Losses now runs its own independent 6-entry board, so its weekly pick count
+            can differ from yours. It beats you only if its <b>hit rate</b> (correct picks as a percentage) is
+            strictly higher than <b>all three</b> of you that week — not just a higher raw count, since that
+            would unfairly favor whoever happens to have more picks. Small samples are also discounted toward
+            50/50 before comparing, so a lucky 3-for-3 week can't trivially beat a bigger, more solid 5-for-6 —
+            the fewer picks either side made, the less that week's rate alone is trusted. A sweep costs each
+            player $5 into the season pot. ${sweepCount} sweep${sweepCount !== 1 ? "s" : ""} so far this season.</p>`
           : `<p class="field-note" style="opacity:0.7">No weeks graded yet — Only Losses' picks reveal once a
             week locks, and its record shows here once that week's games are final.</p>`}
       </div>`;
