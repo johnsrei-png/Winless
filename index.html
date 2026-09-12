@@ -2737,8 +2737,16 @@ async function computePot() {
     }
   });
 
-  const gradedWeekNums = [...new Set((picks || [])
-    .filter(p => p.result && p.result !== "pending").map(p => p.week_number))].sort((a,b)=>a-b);
+  // A week only counts as "graded" for weekly-winner/worst-record purposes
+  // once EVERY pick that week (across all 3 players) has actually resolved —
+  // not the moment a single early game finishes. Otherwise a week gets
+  // declared (and the pot penalty charged) based on a handful of decided
+  // picks while most of the week's games haven't even been played yet.
+  const weekNumsWithPicks1 = [...new Set((picks || []).map(p => p.week_number))];
+  const gradedWeekNums = weekNumsWithPicks1.filter(wk => {
+    const weekPicks = (picks || []).filter(p => p.week_number === wk);
+    return weekPicks.length > 0 && weekPicks.every(p => p.result && p.result !== "pending");
+  }).sort((a,b)=>a-b);
 
   const weekRecords = (wk) => {
     const s = {}; PLAYERS.forEach(p => s[p.id] = { correct:0, conf:0 });
@@ -3492,9 +3500,15 @@ async function renderStandings() {
   // won at season end by MOST WEEKLY WINS (best record that week), conf then earliest submission as tiebreak.
   const WEEKLY_ANTE = 2;
 
-  // per-week best & worst record among the three (uses graded picks)
-  const gradedWeekNums = [...new Set((picks || [])
-    .filter(p => p.result && p.result !== "pending").map(p => p.week_number))].sort((a,b)=>a-b);
+  // per-week best & worst record among the three — only counts a week once
+  // EVERY pick that week has actually resolved, not the moment a single
+  // early game finishes (otherwise the pot penalty gets charged based on a
+  // handful of decided picks while most of the week hasn't been played yet)
+  const weekNumsWithPicks2 = [...new Set((picks || []).map(p => p.week_number))];
+  const gradedWeekNums = weekNumsWithPicks2.filter(wk => {
+    const weekPicks = (picks || []).filter(p => p.week_number === wk);
+    return weekPicks.length > 0 && weekPicks.every(p => p.result && p.result !== "pending");
+  }).sort((a,b)=>a-b);
 
   function weekRecords(wk) {
     const s = {}; PLAYERS.forEach(p => s[p.id] = { correct:0, conf:0 });
