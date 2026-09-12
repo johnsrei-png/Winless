@@ -2300,6 +2300,7 @@ async function renderBoard(wk, headerHtml) {
   // team dropdown options for an entry — disable teams this entry already used
   // ===== Two views: clean summary (default) or full edit board =====
   if (!BOARD_EDIT_MODE) {
+    autoResolveQuiet(wk);   // quietly check ESPN in the background — see function for throttling
     // Clean placed-summary view. Show only live entries with their assigned team + result.
     const live = entries.filter(e => e.status !== "dead");
     const placedCount = live.filter(e => thisWeek[e.id]).length;
@@ -2445,6 +2446,29 @@ function resolveNowHandler(wk) {
       alert("Resolve failed: " + err.message);
     }
   };
+}
+
+// Quietly checks ESPN for newly-finished games in the background, without
+// requiring anyone to click "Resolve now" — this is what actually makes an
+// entry's tile flip to the dead/eliminated photo the moment its game ends,
+// instead of only updating whenever someone happens to press the button.
+// Throttled so it's not re-firing on every 20s background poll (each check
+// is a real ESPN fetch + potential Supabase writes, not just a cheap read).
+async function autoResolveQuiet(wk) {
+  const THROTTLE_MS = 90 * 1000;
+  const now = Date.now();
+  if (window._lastAutoResolve && now - window._lastAutoResolve < THROTTLE_MS) return;
+  window._lastAutoResolve = now;
+  try {
+    const res = await fetch("/.netlify/functions/resolve-now");
+    const data = await res.json();
+    const changed = data && data.ok ? (data.report || []).reduce((n, r) => n + (r.changed || 0), 0) : 0;
+    // only re-render if something actually changed, and never barge in on an
+    // active interaction (typing, editing, an expanded panel, etc.)
+    if (changed > 0 && !userIsBusy() && !document.hidden && CURRENT_TAB === "week") {
+      renderWeek();
+    }
+  } catch (e) { /* silent — this is a background nicety, not a user-facing action */ }
 }
 
 async function saveBoard(wk) {
