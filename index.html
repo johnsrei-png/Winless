@@ -805,6 +805,12 @@
   .bl-step-v { color: var(--ink); font-family: 'Barlow Semi Condensed', sans-serif; white-space: nowrap; }
   .bl-step-total { margin-top: 3px; padding-top: 7px; border-top: 1px solid var(--line); }
   .bl-step-total .bl-step-v { color: var(--gold); }
+  .bl-step.pick-hit { background: rgba(245,196,81,0.10); border-radius: 6px; padding-left: 6px; padding-right: 6px; }
+  .bl-step.pick-hit span:first-child, .bl-step.pick-hit .bl-step-v { color: var(--gold); font-weight: 600; }
+  .bl-step.pick-miss { opacity: 0.6; }
+  .bl-step.pick-miss span:first-child {
+    text-decoration: line-through; text-decoration-color: var(--alert); text-decoration-thickness: 2px;
+  }
 
   /* ---- Team availability matrix ---- */
   .usage-matrix { margin-top: 22px; }
@@ -2199,7 +2205,8 @@ function wirePlayerPickReveal(allPicks, wk) {
       const rows = mine.length
         ? mine.map(p => {
             const pts = wk.picks_required - p.rank + 1;
-            return `<div class="bl-step"><span>#${p.rank} — ${TEAM_NAME[p.team] || p.team}</span><span class="bl-step-v">${pts} pt${pts !== 1 ? "s" : ""}</span></div>`;
+            const cls = p.result === "correct" ? "pick-hit" : p.result === "incorrect" ? "pick-miss" : "";
+            return `<div class="bl-step ${cls}"><span>#${p.rank} — ${TEAM_NAME[p.team] || p.team}</span><span class="bl-step-v">${pts} pt${pts !== 1 ? "s" : ""}</span></div>`;
           }).join("")
         : `<p style="color:var(--ink-faint)">No picks found for this week.</p>`;
       overlay.innerHTML = `
