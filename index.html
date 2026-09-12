@@ -1872,7 +1872,7 @@ async function renderWeek() {
   // week stat bar + tracker
   const trackerHtml = PLAYERS.map(p => {
     const inYet = submittedBy.has(p.id);
-    return `<div class="chip ${inYet ? "in" : "wait"}">
+    return `<div class="chip ${inYet ? "in" : "wait"}" data-player="${p.id}">
         <div class="nm">${p.name}</div>
         <div class="st">${inYet ? "✓ In" : "Waiting"}</div>
       </div>`;
@@ -2182,6 +2182,39 @@ function showOLPickContext(pick, ab) {
   overlay.querySelector("#closeolctx").onclick = () => overlay.remove();
 }
 
+// Once a week is locked, there's no more strategic reason to hide anyone's
+// picks from each other — so make each player's name in the tracker clickable
+// to reveal their full ranked list for the week (rank, team, points). Only
+// ever wired up from renderBoard (post-lock), never from the open pick
+// screen, so pre-lock picks stay hidden exactly as they do today.
+function wirePlayerPickReveal(allPicks, wk) {
+  document.querySelectorAll(".chip[data-player]").forEach(chip => {
+    chip.style.cursor = "pointer";
+    chip.onclick = () => {
+      const pid = chip.dataset.player;
+      const name = PLAYERS.find(p => p.id === pid)?.name || pid;
+      const mine = (allPicks || []).filter(p => p.player_id === pid).sort((a, b) => a.rank - b.rank);
+      const overlay = document.createElement("div");
+      overlay.className = "modal-overlay";
+      const rows = mine.length
+        ? mine.map(p => {
+            const pts = wk.picks_required - p.rank + 1;
+            return `<div class="bl-step"><span>#${p.rank} — ${TEAM_NAME[p.team] || p.team}</span><span class="bl-step-v">${pts} pt${pts !== 1 ? "s" : ""}</span></div>`;
+          }).join("")
+        : `<p style="color:var(--ink-faint)">No picks found for this week.</p>`;
+      overlay.innerHTML = `
+        <div class="modal">
+          <h2>${name}'s Week ${wk.week_number} picks</h2>
+          <div class="bl-detail open" style="display:block;padding:0">${rows}</div>
+          <div class="modal-actions"><button class="btn btn-ghost" id="closepickreveal">Close</button></div>
+        </div>`;
+      document.body.appendChild(overlay);
+      overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+      overlay.querySelector("#closepickreveal").onclick = () => overlay.remove();
+    };
+  });
+}
+
 async function renderBoard(wk, headerHtml) {
   const [allPicks, entries, assigns] = await Promise.all([
     sbGet(`picks?week_number=eq.${wk.week_number}`),
@@ -2341,6 +2374,7 @@ async function renderBoard(wk, headerHtml) {
     document.getElementById("resolvenow").onclick = resolveNowHandler(wk);
     wireEntryRename();
     wireOLChips();
+    wirePlayerPickReveal(allPicks, wk);
     return;
   }
 
@@ -2412,6 +2446,7 @@ async function renderBoard(wk, headerHtml) {
     s.onchange = () => s.classList.toggle("unset", !s.value);
   });
   wireOLChips();
+  wirePlayerPickReveal(allPicks, wk);
   document.getElementById("saveboard").onclick = () => saveBoard(wk);
   document.getElementById("doneedit").onclick = async () => {
     // save current board, then drop back to clean summary
