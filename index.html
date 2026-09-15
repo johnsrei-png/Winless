@@ -792,6 +792,9 @@
   .bl-name { font-weight: 600; font-size: 14px; }
   .bl-side { color: var(--ink-faint); font-weight: 400; font-size: 12px; }
   .bl-meta { font-size: 11px; color: var(--ink-faint); font-family: 'Barlow Semi Condensed', sans-serif; margin-top: 1px; }
+  .bl-field { font-weight: 600; }
+  .bl-field-chalk { color: var(--gold); }
+  .bl-field-open { color: var(--live); }
   .bl-row { cursor: pointer; }
   .bl-row:hover { background: var(--panel-2); }
   .bl-caret { font-size: 10px; color: var(--ink-faint); }
@@ -2618,6 +2621,78 @@ function parseFieldPaste(text) {
   return { rows, weeks: maxWeeks, unknown: [...unknown], usesReliableDelim };
 }
 
+// Real CSV line parser (handles quoted fields with embedded commas — a real
+// person's name like "Giguiere, Marty" would break naive comma-splitting).
+function parseCSVLine(line) {
+  const result = [];
+  let cur = "", inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (inQuotes) {
+      if (c === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else inQuotes = false; }
+      else cur += c;
+    } else {
+      if (c === '"') inQuotes = true;
+      else if (c === ',') { result.push(cur); cur = ""; }
+      else cur += c;
+    }
+  }
+  result.push(cur);
+  return result;
+}
+
+// Parses an actual SimplySportsWare CSV export directly — columns are
+// Member (entry name), Alive (True/False), one NUMBERED column per week
+// (just "1", "2", ...), Name (the real person, used as owner — far more
+// reliable than guessing from a trailing number), Week Eliminated, and
+// Correct Picks. Returns null if this doesn't look like that format at all,
+// so the caller can fall back to the older generic paste parser.
+function parseSimplySportsCSV(text) {
+  const lines = text.split(/\r?\n/).filter(l => l.trim().length);
+  if (!lines.length) return null;
+  const header = parseCSVLine(lines[0]).map(h => h.trim());
+  const idx = (name) => header.findIndex(h => h.toLowerCase() === name.toLowerCase());
+  const memberIdx = idx("Member");
+  if (memberIdx === -1) return null;   // not this format — let the caller fall back
+
+  const aliveIdx = idx("Alive");
+  const nameIdx = idx("Name");
+  const weekElimIdx = idx("Week Eliminated");
+  const weekCols = [];
+  header.forEach((h, i) => { if (/^\d+$/.test(h)) weekCols.push({ week: parseInt(h, 10), col: i }); });
+  weekCols.sort((a, b) => a.week - b.week);
+  const maxWeek = weekCols.length ? weekCols[weekCols.length - 1].week : 0;
+
+  const rows = [];
+  const unknown = new Set();
+  for (let i = 1; i < lines.length; i++) {
+    const cells = parseCSVLine(lines[i]).map(c => c.trim());
+    if (!cells.length || !cells[memberIdx]) continue;
+    const entryName = cells[memberIdx];
+    const ownerReal = nameIdx !== -1 ? cells[nameIdx] : "";
+    const alive = aliveIdx !== -1 ? cells[aliveIdx].toLowerCase() === "true" : true;
+    const weekElim = weekElimIdx !== -1 ? (parseInt(cells[weekElimIdx], 10) || 0) : 0;
+    const picks = new Array(maxWeek).fill(null);
+    weekCols.forEach(({ week, col }) => {
+      const raw = cells[col];
+      if (raw) {
+        const t = normTeam(raw);
+        if (t) picks[week - 1] = t;
+        else unknown.add(raw);
+      }
+    });
+    rows.push({
+      name: entryName,
+      owner: ownerReal || ownerOf(entryName),
+      picks,
+      // "Week Eliminated" of 0 means still alive in this export's convention;
+      // fall back to the Alive flag if that field's missing/inconsistent.
+      outWeek: weekElim > 0 ? weekElim : (alive ? null : maxWeek),
+    });
+  }
+  return { rows, weeks: maxWeek, unknown: [...unknown] };
+}
+
 // Aliases (FOXY 1, FOXY 2) share an owner = name minus trailing number.
 function ownerOf(entryName) {
   return entryName.replace(/\s+\d+$/,"").trim();
@@ -2654,7 +2729,14 @@ function fieldImportHtml(prefill, note) {
   return `
     <div class="import-box">
       <h3>Import field picks</h3>
-      <p>${note || "Paste the whole pool's picks grid (from SimplySportsWare). First row headers, then one entry per line: name, then one team per week. Tabs, commas, or spaces all work."}</p>
+      <p>${note || "Upload the SimplySportsWare CSV export directly, or paste its contents below — it's read exactly as exported (Member, Alive, one column per week, Name, Week Eliminated). A plain NAME + one-team-per-week grid still works too, if you're pasting from somewhere else."}</p>
+      <div class="import-actions" style="margin-bottom:10px">
+        <label class="btn btn-ghost" style="cursor:pointer">
+          Choose CSV file
+          <input type="file" accept=".csv,text/csv" id="csvfile" style="display:none">
+        </label>
+        <span style="font-size:12px;color:var(--ink-faint)">or paste below</span>
+      </div>
       <textarea class="paste" id="paste" placeholder="NAME\tWEEK 1\tWEEK 2\tWEEK 3
 FOXY 1\tCowboys\tBears\tBrowns
 DELWAKA 1\tBrowns\tPanthers\tJets">${prefill || ""}</textarea>
@@ -2668,12 +2750,29 @@ DELWAKA 1\tBrowns\tPanthers\tJets">${prefill || ""}</textarea>
 function wireFieldImport(curWeek) {
   const btn = document.getElementById("doimport");
   if (btn) btn.onclick = () => doFieldImport(curWeek);
+  const fileInput = document.getElementById("csvfile");
+  if (fileInput) fileInput.onchange = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const ta = document.getElementById("paste");
+      if (ta) ta.value = reader.result;
+    };
+    reader.readAsText(file);
+  };
 }
 
 async function doFieldImport(curWeek) {
   const msg = document.getElementById("importmsg");
   const text = document.getElementById("paste").value;
-  const parsed = parseFieldPaste(text);
+
+  // try the real SimplySportsWare CSV export first; fall back to the older
+  // generic paste format if this doesn't look like that
+  const ssw = parseSimplySportsCSV(text);
+  const usingCSV = !!(ssw && ssw.rows.length);
+  const parsed = usingCSV ? ssw : parseFieldPaste(text);
+
   if (!parsed.rows.length) {
     msg.className = "msg err"; msg.textContent = "Couldn't find any rows — check the paste.";
     return;
@@ -2682,19 +2781,22 @@ async function doFieldImport(curWeek) {
   btn.disabled = true;
   msg.className = "msg"; msg.textContent = "Importing…";
 
-  // upsert one row per entry: { entry_name, owner, picks(json) }
+  // upsert one row per entry: { entry_name, owner, picks(json), out_week }
   const rows = parsed.rows.map(r => ({
     entry_name: r.name,
-    owner: ownerOf(r.name),
+    owner: r.owner || ownerOf(r.name),
     picks: JSON.stringify(r.picks),
+    out_week: r.outWeek ?? null,
   }));
 
   try {
     // replace the whole field snapshot
     await sb("field_picks?entry_name=neq.__none__", { method: "DELETE" });
     await sb("field_picks", { method: "POST", body: JSON.stringify(rows) });
-    let note = `Imported ${parsed.rows.length} entries across ${parsed.weeks} week${parsed.weeks!==1?"s":""}.`;
-    if (!parsed.usesReliableDelim) note += ` Heads up: no tabs/commas detected — used space-splitting, which can misread names with spaces. If picks look wrong, paste from the site's copy (usually tab-separated) or use a CSV.`;
+    let note = usingCSV
+      ? `Imported ${parsed.rows.length} entries from the CSV export, ${parsed.weeks} week${parsed.weeks!==1?"s":""} of picks.`
+      : `Imported ${parsed.rows.length} entries across ${parsed.weeks} week${parsed.weeks!==1?"s":""}.`;
+    if (!usingCSV && !parsed.usesReliableDelim) note += ` Heads up: no tabs/commas detected — used space-splitting, which can misread names with spaces. If picks look wrong, paste from the site's copy (usually tab-separated) or use a CSV.`;
     if (parsed.unknown.length) note += ` Unrecognized: ${parsed.unknown.slice(0,8).join(", ")}${parsed.unknown.length>8?"…":""} (skipped).`;
     msg.className = "msg ok"; msg.textContent = note;
     setTimeout(() => renderField(), 900);
@@ -5325,6 +5427,27 @@ async function computeBestLoserScores(week) {
   return teams;
 }
 
+// Field concentration for one specific week — % of the (still-alive-at-that-
+// point) field on each team. Shared by the Field tab and the pick screen so
+// they always agree with each other, computed from whatever's been imported.
+async function computeFieldPctForWeek(week) {
+  const field = await sbGet("field_picks?order=entry_name.asc").catch(() => []);
+  if (!field || !field.length) return null;
+  const entries = field.map(f => ({
+    outWeek: f.out_week ?? null,
+    picks: (() => { try { return JSON.parse(f.picks); } catch { return []; } })(),
+  }));
+  const wIdx = week - 1;
+  const aliveThisWeek = entries.filter(e => (e.outWeek == null || e.outWeek >= week) && e.picks[wIdx]);
+  const total = aliveThisWeek.length;
+  if (!total) return null;
+  const counts = {};
+  aliveThisWeek.forEach(e => { const t = e.picks[wIdx]; if (t) counts[t] = (counts[t] || 0) + 1; });
+  const pct = {};
+  Object.entries(counts).forEach(([team, n]) => { pct[team] = n / total; });
+  return { pct, total };
+}
+
 async function loadMatchups(week) {
   const panel = document.getElementById("matchups");
   if (!panel) return;
@@ -5350,6 +5473,12 @@ async function loadMatchups(week) {
     window._blTeams = teams;
     window._blWeek = week;
     document.getElementById("blcontrols").style.display = "flex";
+
+    // field concentration for THIS specific week, if field picks have been
+    // imported — surfaced right next to the score so it's visible while
+    // you're actually deciding, not just in a separate tab afterward.
+    window._fieldPct = await computeFieldPctForWeek(week).catch(() => null);
+
     renderBestLosers("score");
 
     // snapshot every team's current score for this week — the accuracy tracker
@@ -5385,13 +5514,18 @@ function renderBestLosers(sortBy) {
   const scoreColor = (s) => s >= 65 ? "var(--live)" : s >= 50 ? "var(--gold)" : "var(--ink-faint)";
   const spreadTxt = (t) => t.teamSpread == null ? "—"
     : t.teamSpread > 0 ? `+${t.teamSpread} dog` : t.teamSpread < 0 ? `${t.teamSpread} fav` : "PK";
+  const fieldTxt = (t) => {
+    if (!window._fieldPct || window._fieldPct.pct[t.ab] == null) return "";
+    const pct = Math.round(window._fieldPct.pct[t.ab] * 100);
+    return ` · <span class="bl-field${pct >= 20 ? " bl-field-chalk" : pct <= 5 ? " bl-field-open" : ""}">${pct}% of field</span>`;
+  };
 
   const rows = teams.map((t, i) => `
     <div class="bl-row" data-bl="${i}">
       <div class="bl-score" style="color:${scoreColor(t.score)}">${t.score}</div>
       <div class="bl-team">
         <div class="bl-name">${t.name} <span class="bl-side">${t.side === "away" ? "@" : "vs"} ${t.oppName}</span> <span class="bl-caret">▸</span></div>
-        <div class="bl-meta">${spreadTxt(t)} · ${t.when}</div>
+        <div class="bl-meta">${spreadTxt(t)} · ${t.when}${fieldTxt(t)}</div>
       </div>
     </div>
     <div class="bl-detail" data-bld="${i}" style="display:none">
@@ -5405,7 +5539,7 @@ function renderBestLosers(sortBy) {
     <div class="matchup-note">Loser score = chance this team loses. ${anyConsensus
       ? "Built from <b>consensus multi-book moneylines</b> (vig removed) + spread + opponent power rating + road performance + rest + divisional dampening."
       : "Built from ESPN's line + opponent power rating + road performance + rest + divisional dampening. (Add an Odds API key for sharper multi-book consensus.)"}
-      Tap a team to see the math. Lines already bake in injuries, QB, rest & weather.</div>`;
+      Tap a team to see the math. Lines already bake in injuries, QB, rest & weather.${window._fieldPct ? ` Field % is this week's whole pool (${window._fieldPct.total} alive entries) — a great score that's also low field % is the differentiated pick.` : ""}</div>`;
   if (existing) existing.outerHTML = html;
   else panel.insertAdjacentHTML("beforeend", html);
 
