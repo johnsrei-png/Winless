@@ -2862,8 +2862,22 @@ function renderFieldIntel(field, week) {
 
   // owners & total entries; still-alive across the whole field (not week-specific)
   const owners = new Set(entries.map(e => e.owner));
-  const stillAlive = entries.filter(e => e.outWeek == null).length;
+  const stillAliveEntries = entries.filter(e => e.outWeek == null);
+  const stillAlive = stillAliveEntries.length;
   const anyResolved = entries.some(e => e.outWeek != null);
+
+  // Field availability: for each team, how many of the still-alive field
+  // entries have NOT used it yet (across their whole pick history so far) —
+  // the inverse of concentration. Sorted scarcest-first, since a team running
+  // low on fresh entries is the more strategically interesting signal.
+  const usedBy = {};   // team -> array of entries that have already used it
+  stillAliveEntries.forEach(e => {
+    new Set(e.picks.filter(Boolean)).forEach(t => { (usedBy[t] ||= []).push(e); });
+  });
+  const availability = TEAMS.map(([ab, nm]) => {
+    const usedEntries = usedBy[ab] || [];
+    return { ab, nm, usedCount: usedEntries.length, availableCount: stillAlive - usedEntries.length, usedEntries };
+  }).sort((a, b) => a.availableCount - b.availableCount);
 
   const stats = `
     <div class="field-stats">
@@ -2889,6 +2903,16 @@ function renderFieldIntel(field, week) {
       </div>`;
   }).join("");
 
+  const availRows = availability.map((a, i) => {
+    const scarce = a.availableCount <= Math.max(1, Math.round(stillAlive * 0.1));   // bottom ~10% = running low
+    return `
+      <div class="heat-row um-cell" data-avail="${i}" style="cursor:pointer">
+        <div class="team">${a.nm}${scarce ? `<small style="color:var(--alert)">running low</small>` : `<small>${a.usedCount} already used</small>`}</div>
+        <div class="heat-bar-wrap"><div class="heat-bar" style="width:${stillAlive ? Math.max(2, a.availableCount/stillAlive*100) : 0}%; background: ${scarce ? 'linear-gradient(90deg,var(--alert-dim),var(--alert))' : 'linear-gradient(90deg,var(--live),var(--live))'}"></div></div>
+        <div class="pct">${a.availableCount}<small>of ${stillAlive} still can</small></div>
+      </div>`;
+  }).join("");
+
   app.innerHTML = `
     ${fieldImportHtml("", null)}
     ${stats}
@@ -2900,10 +2924,32 @@ function renderFieldIntel(field, week) {
     <p class="field-note">How much of the surviving field is riding each team this week. High % = chalk
       (safe but crowded); <span style="color:var(--live)">OPEN</span> flags teams almost nobody's using —
       contrarian survival if you believe in them.</p>
-    <div class="heat-table">${heatRows || '<div class="heat-row"><div class="team" style="color:var(--ink-faint)">No picks for this week yet.</div></div>'}</div>`;
+    <div class="heat-table">${heatRows || '<div class="heat-row"><div class="team" style="color:var(--ink-faint)">No picks for this week yet.</div></div>'}</div>
+
+    <div class="section-title" style="margin-top:24px">Field availability — who still has what left</div>
+    <p class="field-note">Across the ${stillAlive} still-alive field entries' full pick history so far — how many
+      still haven't used each team at all. A team running low on fresh entries means the field is increasingly
+      forced elsewhere. Tap any team to see exactly which entries have already burned it.</p>
+    <div class="heat-table">${availRows || '<div class="heat-row"><div class="team" style="color:var(--ink-faint)">No data yet.</div></div>'}</div>
+    <div class="um-drill" id="fielddrill" style="display:none"></div>`;
 
   wireFieldImport(week);
   document.getElementById("wksel").onchange = (e) => renderFieldIntel(field, +e.target.value);
+
+  document.querySelectorAll(".um-cell[data-avail]").forEach(row => {
+    row.onclick = () => {
+      const a = availability[+row.dataset.avail];
+      const drill = document.getElementById("fielddrill");
+      if (!drill) return;
+      drill.style.display = "block";
+      drill.innerHTML = a.usedEntries.length
+        ? `<b>${a.nm}</b> — already used by ${a.usedEntries.length} of ${stillAlive} still-alive entries:
+           ${a.usedEntries.slice(0, 40).map(e => `<span class="um-chip">${e.name}</span>`).join("")}
+           ${a.usedEntries.length > 40 ? `<span class="um-chip">+${a.usedEntries.length - 40} more</span>` : ""}`
+        : `<b>${a.nm}</b> — nobody in the still-alive field has used this yet. Wide open.`;
+      drill.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    };
+  });
 }
 
 // ============================================================
