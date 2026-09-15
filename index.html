@@ -6586,7 +6586,12 @@ async function safeRefresh() {
   try {
     // re-render the current tab WITHOUT the "Loading…" flash
     renderStatusStrip();
-    if (CURRENT_TAB === "field") await renderField();
+    // Field tab is deliberately excluded — its data is static once imported
+    // (only a real import action should ever refresh it), and a background
+    // poll landing mid-import was exactly what kept clobbering the paste box
+    // no matter how the timing/content guards were tuned. Simplest fix:
+    // there's no scenario where auto-refreshing this tab is actually useful.
+    if (CURRENT_TAB === "field") { /* intentionally not refreshed automatically */ }
     else if (CURRENT_TAB === "standings") await renderStandings();
     else if (CURRENT_TAB === "award") await renderAward();
     else if (CURRENT_TAB === "test") { /* nothing live to refresh in the sandbox */ }
