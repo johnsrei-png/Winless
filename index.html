@@ -6566,6 +6566,14 @@ function userIsBusy() {
   // never re-render out from under someone mid-puzzle — it would re-shuffle
   // and wipe their progress
   if (CURRENT_TAB === "week" && document.getElementById("puzzlegrid")) return true;
+  // don't clobber an in-progress field-picks import — checking focus alone
+  // isn't reliable here (a file picker or drag-drop can populate the
+  // textarea without ever giving it real focus), so check its actual
+  // content directly instead.
+  if (CURRENT_TAB === "field") {
+    const ta = document.getElementById("paste");
+    if (ta && ta.value.trim()) return true;
+  }
   return false;
 }
 
