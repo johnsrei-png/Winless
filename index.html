@@ -1836,6 +1836,430 @@ function renderPuzzleGate(wk, headerHtml) {
 }
 
 
+// Production drag-tile picking interface — same interaction the sandbox
+// prototype proved out, but wired to real prefill/submit and sitting inside
+// the real header/tracker instead of a standalone sandbox screen. Selected
+// per-player via the theme editor's "Pick style" setting; saves through the
+// exact same submitRankedPicks() as every other style, so it's never a
+// second source of truth for how a pick counts.
+async function renderDragPickReal(wk, headerHtml, myPicks, deadTeams, allIn) {
+  const picksReq = wk.picks_required;
+  app.innerHTML = headerHtml + `<div id="dragpickbox"><div class="center-msg">Crunching the lines…</div></div>`;
+  const box = document.getElementById("dragpickbox");
+
+  const teams = await computeBestLoserScores(wk.week_number).catch(() => []);
+  if (!teams.length) {
+    box.innerHTML = `<div class="center-msg">No matchups posted yet for Week ${wk.week_number}.</div>`;
+    return;
+  }
+
+  // prefill slots from existing picks (by rank), same as Classic does
+  const existingByRank = {};
+  myPicks.forEach(p => { existingByRank[p.rank] = p.team; });
+  let slots = new Array(picksReq).fill(null);
+  for (let r = 1; r <= picksReq; r++) {
+    if (existingByRank[r]) {
+      const t = teams.find(tm => tm.ab === existingByRank[r]);
+      if (t) slots[r - 1] = t;
+    }
+  }
+  const placedAbs = () => new Set(slots.filter(Boolean).map(t => t.ab));
+  let pool = teams.filter(t => !deadTeams.has(t.ab) && !placedAbs().has(t.ab)).sort((a, b) => b.score - a.score);
+
+  const scoreColor = (s) => s >= 65 ? "var(--live)" : s >= 50 ? "var(--gold)" : "var(--ink-faint)";
+  const spreadTxt = (t) => t.teamSpread == null ? "—"
+    : t.teamSpread > 0 ? `+${t.teamSpread} dog` : t.teamSpread < 0 ? `${t.teamSpread} fav` : "PK";
+
+  function tileHtml(t, extra = "") {
+    return `<div class="dnd-tile ${extra}" data-ab="${t.ab}">
+      <div class="dnd-score" style="color:${scoreColor(t.score)}">${t.score}</div>
+      <div class="dnd-teaminfo">
+        <div class="dnd-name">${t.name}</div>
+        <div class="dnd-meta">${t.side === "away" ? "@" : "vs"} ${t.oppName} · ${spreadTxt(t)}</div>
+      </div>
+    </div>`;
+  }
+
+  function render() {
+    const filled = slots.filter(Boolean).length;
+    const slotsHtml = slots.map((t, i) => {
+      const pts = picksReq - i;
+      return `<div class="dnd-slot" data-slot="${i}">
+        <div class="dnd-slot-rank">${i + 1}<span class="dnd-slot-pts">${pts} pt${pts !== 1 ? "s" : ""}</span></div>
+        <div class="dnd-slot-body">${t ? tileHtml(t, "placed") : `<div class="dnd-slot-empty">drop here</div>`}</div>
+      </div>`;
+    }).join("");
+    const poolHtml = pool.map(t => tileHtml(t, "compact")).join("");
+
+    box.innerHTML = `
+      <div class="section-title">Your ranked losers — drag a team into a slot, most confident at the top</div>
+      <p class="hint">Pick ${picksReq} different teams you think will lose this week. Rank 1 is worth ${picksReq}
+        points, down to 1 point at the bottom. Tap any tile for its full loser-score math.</p>
+      <div class="dnd-layout">
+        <div>
+          <div class="section-title">Your picks (${filled}/${picksReq})</div>
+          <div class="dnd-slots" id="dndslots">${slotsHtml}</div>
+        </div>
+        <div class="dnd-pool-col">
+          <div class="section-title">Available teams</div>
+          <div class="dnd-pool dnd-pool-grid" id="dndpool">${poolHtml}</div>
+        </div>
+      </div>
+      ${deadTeams.size ? `<p class="hint dead-note">Hidden — used by all six entries, can't be placed anywhere:
+        ${[...deadTeams].map(ab => TEAM_NAME[ab] || ab).sort().join(", ")}.</p>` : ""}
+      <div class="submitbar">
+        <button class="btn btn-primary" id="submit" ${filled < picksReq ? "disabled" : ""}>${myPicks.length ? "Update my list" : "Submit my list"}</button>
+        <span class="msg" id="msg"></span>
+      </div>
+      ${allIn ? `
+        <div class="lockbar">
+          <div class="lbltxt"><b>All three lists are in.</b> Lock the week to reveal the master
+            ranking and start placing entries. Once cocked, picks are final.</div>
+          <button class="btn btn-lock" id="lockweek">Lock week &amp; reveal</button>
+        </div>` : ""}
+      <div class="usage-matrix" id="usagematrix">
+        <div class="section-title">Team Availability — how many entries can still use each team</div>
+        <div class="um-loading">Loading availability…</div>
+      </div>`;
+
+    document.getElementById("submit").onclick = () => submitDragPicks(wk);
+    const lockBtn = document.getElementById("lockweek");
+    if (lockBtn) lockBtn.onclick = () => lockWeek(wk);
+    wireDrag();
+  }
+
+  function findTeam(ab) { return teams.find(t => t.ab === ab); }
+
+  function wireDrag() {
+    document.querySelectorAll(".dnd-tile").forEach(tile => {
+      tile.onpointerdown = (e) => {
+        e.preventDefault();
+        const ab = tile.dataset.ab;
+        const fromSlot = tile.closest(".dnd-slot") ? +tile.closest(".dnd-slot").dataset.slot : null;
+        const startX = e.clientX, startY = e.clientY;
+        const rect = tile.getBoundingClientRect();
+        let moved = false;
+        const DRAG_THRESHOLD = 6;
+        tile.setPointerCapture(e.pointerId);
+
+        const move = (ev) => {
+          const dx = ev.clientX - startX, dy = ev.clientY - startY;
+          if (!moved && Math.hypot(dx, dy) > DRAG_THRESHOLD) {
+            moved = true;
+            tile.classList.add("dragging");
+            tile.style.width = rect.width + "px";
+          }
+          if (moved) tile.style.transform = `translate(${dx}px, ${dy}px)`;
+        };
+        const up = (ev) => {
+          tile.removeEventListener("pointermove", move);
+          tile.removeEventListener("pointerup", up);
+          try { tile.releasePointerCapture(ev.pointerId); } catch (err) {}
+
+          if (!moved) { showScoreBreakdown(findTeam(ab)); return; }
+
+          tile.classList.remove("dragging");
+          tile.style.transform = ""; tile.style.width = "";
+          tile.style.pointerEvents = "none";
+          const el = document.elementFromPoint(ev.clientX, ev.clientY);
+          tile.style.pointerEvents = "";
+          const targetSlotEl = el ? el.closest(".dnd-slot") : null;
+          const targetPoolEl = el ? el.closest(".dnd-pool") : null;
+
+          const team = findTeam(ab);
+          if (targetSlotEl) {
+            const toSlot = +targetSlotEl.dataset.slot;
+            const bumped = slots[toSlot];
+            if (fromSlot != null) {
+              slots[fromSlot] = bumped;
+              slots[toSlot] = team;
+            } else {
+              pool = pool.filter(t => t.ab !== ab);
+              if (bumped) pool.push(bumped);
+              slots[toSlot] = team;
+            }
+          } else if (targetPoolEl || !el) {
+            if (fromSlot != null) {
+              slots[fromSlot] = null;
+              if (!pool.find(t => t.ab === ab)) pool.push(team);
+            }
+          }
+          pool.sort((a, b) => b.score - a.score);
+          render();
+        };
+        tile.addEventListener("pointermove", move);
+        tile.addEventListener("pointerup", up);
+      };
+    });
+  }
+
+  function showScoreBreakdown(t) {
+    if (!t) return;
+    const overlay = document.createElement("div");
+    overlay.className = "modal-overlay";
+    const scoreColor2 = t.score >= 65 ? "var(--live)" : t.score >= 50 ? "var(--gold)" : "var(--ink-faint)";
+    overlay.innerHTML = `
+      <div class="modal">
+        <h2 style="display:flex;align-items:center;gap:12px">
+          <span style="font-family:'Barlow Condensed',sans-serif;font-size:36px;color:${scoreColor2}">${t.score}</span>
+          ${t.name}
+        </h2>
+        <p style="margin-top:-8px">${t.side === "away" ? "@" : "vs"} ${t.oppName} · ${t.when}</p>
+        <div class="bl-detail open" style="display:block;padding:0">
+          ${(t.steps || []).map(s => `<div class="bl-step"><span>${s.label}</span><span class="bl-step-v">${s.val}</span></div>`).join("")}
+          <div class="bl-step bl-step-total"><span><b>Loser score</b></span><span class="bl-step-v"><b>${t.score}</b></span></div>
+        </div>
+        <div class="modal-actions"><button class="btn btn-ghost" id="closebreakdown">Close</button></div>
+      </div>`;
+    document.body.appendChild(overlay);
+    overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+    overlay.querySelector("#closebreakdown").onclick = () => overlay.remove();
+  }
+
+  async function submitDragPicks(wk) {
+    const msg = document.getElementById("msg");
+    const ordered = slots.map(t => t ? t.ab : null);
+    if (ordered.some(t => !t)) {
+      msg.className = "msg err"; msg.textContent = `Fill all ${picksReq} slots.`;
+      return;
+    }
+    const btn = document.getElementById("submit");
+    btn.disabled = true; msg.className = "msg"; msg.textContent = "Saving…";
+    const result = await submitRankedPicks(wk, ordered);
+    if (result.ok) {
+      msg.className = "msg ok"; msg.textContent = "Locked in ✓";
+      window._pickEditMode = false;
+      setTimeout(renderWeek, 700);
+    } else {
+      btn.disabled = false; msg.className = "msg err"; msg.textContent = "Save failed: " + result.error;
+    }
+  }
+
+  render();
+  // per-entry availability matrix below, matching Classic
+  const [allAssigns2, entries2] = await Promise.all([
+    sbGet(`assignments?order=week_number.asc`).catch(() => []),
+    sbGet(`entries?order=id.asc`).catch(() => []),
+  ]);
+  const liveEntryIds2 = (entries2 || []).filter(e => e.status !== "dead").map(e => e.id);
+  const entriesUsingTeam2 = {};
+  (allAssigns2 || []).forEach(a => { (entriesUsingTeam2[a.team] ||= new Set()).add(a.entry_id); });
+  renderUsageMatrix(wk.week_number, entriesUsingTeam2, liveEntryIds2, entries2);
+}
+
+// Production sportsbook-slip picking interface — tap a team's odds badge to
+// add it to your slip, drag slip items to reorder (order sets confidence).
+// Same shared submit path as every other style.
+async function renderSportsbookReal(wk, headerHtml, myPicks, deadTeams, allIn) {
+  const picksReq = wk.picks_required;
+  app.innerHTML = headerHtml + `<div id="sbbox"><div class="center-msg">Crunching the lines…</div></div>`;
+  const box = document.getElementById("sbbox");
+
+  const teams = await computeBestLoserScores(wk.week_number).catch(() => []);
+  if (!teams.length) {
+    box.innerHTML = `<div class="center-msg">No matchups posted yet for Week ${wk.week_number}.</div>`;
+    return;
+  }
+
+  const spreadTxt = (t) => t.teamSpread == null ? "—"
+    : t.teamSpread > 0 ? `+${t.teamSpread} dog` : t.teamSpread < 0 ? `${t.teamSpread} fav` : "PK";
+  const sorted = teams.slice().sort((a, b) => b.score - a.score);
+  const eligible = sorted.filter(t => !deadTeams.has(t.ab));
+
+  // prefill the slip from existing picks (by rank, most confident first)
+  const existingByRank = {};
+  myPicks.forEach(p => { existingByRank[p.rank] = p.team; });
+  let picked = [];
+  for (let r = 1; r <= picksReq; r++) {   // ascending, so picked[0] ends up genuinely being rank 1
+    if (existingByRank[r]) {
+      const t = teams.find(tm => tm.ab === existingByRank[r]);
+      if (t) picked.push(t);
+    }
+  }
+
+  const rows = eligible.map(t => `
+    <div class="sb-game">
+      <div class="sb-team-info" data-ab="${t.ab}">
+        <div class="sb-team-name">${t.name}</div>
+        <div class="sb-team-meta">${t.side === "away" ? "@" : "vs"} ${t.oppName} · ${spreadTxt(t)}</div>
+      </div>
+      <button class="sb-odds-btn ${picked.find(p => p.ab === t.ab) ? "sb-odds-selected" : ""}" data-ab="${t.ab}">
+        <span class="sb-odds-score">${t.score}</span><span class="sb-odds-lbl">loser score</span>
+      </button>
+    </div>`).join("");
+
+  box.innerHTML = `
+    <p class="hint" style="margin-bottom:14px">Tap a team's name for its loser-score math; tap the odds badge to
+      add it to your slip, then drag slip items to reorder — order sets confidence points. Pick ${picksReq}
+      teams total.</p>
+    <div class="sb-wrap" id="sbWrap">
+      <div class="sb-main">
+        <div class="sb-section-head">Week ${wk.week_number} — Best Losers</div>
+        <div class="sb-games">${rows}</div>
+        ${deadTeams.size ? `<p class="hint dead-note">Hidden — used by all six entries, can't be placed anywhere:
+          ${[...deadTeams].map(ab => TEAM_NAME[ab] || ab).sort().join(", ")}.</p>` : ""}
+      </div>
+      <div class="sb-slip" id="sbSlip">
+        <div class="sb-slip-head">Your Picks <span id="sbSlipCount">0/${picksReq}</span></div>
+        <div class="sb-slip-body" id="sbSlipBody"></div>
+        <button class="sb-slip-btn" id="sbSlipSubmit" disabled>${myPicks.length ? "Update my list" : "Submit my list"}</button>
+        <span class="msg" id="msg"></span>
+      </div>
+    </div>
+    ${allIn ? `
+      <div class="lockbar">
+        <div class="lbltxt"><b>All three lists are in.</b> Lock the week to reveal the master
+          ranking and start placing entries. Once cocked, picks are final.</div>
+        <button class="btn btn-lock" id="lockweek">Lock week &amp; reveal</button>
+      </div>` : ""}
+    <div class="usage-matrix" id="usagematrix">
+      <div class="section-title">Team Availability — how many entries can still use each team</div>
+      <div class="um-loading">Loading availability…</div>
+    </div>`;
+
+  const lockBtn = document.getElementById("lockweek");
+  if (lockBtn) lockBtn.onclick = () => lockWeek(wk);
+
+  function showBreakdown(t) {
+    const overlay = document.createElement("div");
+    overlay.className = "modal-overlay";
+    const scoreColor = t.score >= 65 ? "var(--live)" : t.score >= 50 ? "var(--gold)" : "var(--ink-faint)";
+    overlay.innerHTML = `
+      <div class="modal">
+        <h2 style="display:flex;align-items:center;gap:12px">
+          <span style="font-family:'Barlow Condensed',sans-serif;font-size:36px;color:${scoreColor}">${t.score}</span>
+          ${t.name}
+        </h2>
+        <p style="margin-top:-8px">${t.side === "away" ? "@" : "vs"} ${t.oppName} · ${t.when}</p>
+        <div class="bl-detail open" style="display:block;padding:0">
+          ${(t.steps || []).map(s => `<div class="bl-step"><span>${s.label}</span><span class="bl-step-v">${s.val}</span></div>`).join("")}
+          <div class="bl-step bl-step-total"><span><b>Loser score</b></span><span class="bl-step-v"><b>${t.score}</b></span></div>
+        </div>
+        <div class="modal-actions"><button class="btn btn-ghost" id="closebreakdown">Close</button></div>
+      </div>`;
+    document.body.appendChild(overlay);
+    overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+    overlay.querySelector("#closebreakdown").onclick = () => overlay.remove();
+  }
+
+  function renderSlip() {
+    document.getElementById("sbSlipCount").textContent = `${picked.length}/${picksReq}`;
+    const slipBody = document.getElementById("sbSlipBody");
+    slipBody.innerHTML = picked.length
+      ? picked.map((p, i) => `
+          <div class="sb-slip-item" data-ab="${p.ab}">
+            <span class="sb-slip-rank">${picksReq - i}</span>
+            <span class="sb-slip-name">${p.name}</span>
+            <b>${p.score}</b>
+            <span class="sb-slip-remove" data-ab="${p.ab}">✕</span>
+          </div>`).join("")
+      : `<div class="sb-slip-empty">Tap a loser score to add it to your slip</div>`;
+    document.getElementById("sbSlipSubmit").disabled = picked.length !== picksReq;
+
+    slipBody.querySelectorAll(".sb-slip-remove").forEach(x => {
+      x.onclick = (e) => {
+        e.stopPropagation();
+        const ab = x.dataset.ab;
+        picked = picked.filter(p => p.ab !== ab);
+        const btn = box.querySelector(`.sb-odds-btn[data-ab="${ab}"]`);
+        if (btn) btn.classList.remove("sb-odds-selected");
+        renderSlip();
+      };
+    });
+    wireSlipDrag();
+  }
+
+  function wireSlipDrag() {
+    document.querySelectorAll(".sb-slip-item").forEach(item => {
+      item.onpointerdown = (e) => {
+        if (e.target.classList.contains("sb-slip-remove")) return;
+        e.preventDefault();
+        const ab = item.dataset.ab;
+        const startY = e.clientY;
+        let moved = false;
+        item.setPointerCapture(e.pointerId);
+        const move = (ev) => {
+          const dy = ev.clientY - startY;
+          if (!moved && Math.abs(dy) > 6) { moved = true; item.classList.add("sb-slip-dragging"); }
+          if (moved) item.style.transform = `translateY(${dy}px)`;
+        };
+        const up = (ev) => {
+          item.removeEventListener("pointermove", move);
+          item.removeEventListener("pointerup", up);
+          try { item.releasePointerCapture(ev.pointerId); } catch (err) {}
+          item.classList.remove("sb-slip-dragging");
+          item.style.transform = "";
+          if (moved) {
+            item.style.pointerEvents = "none";
+            const el = document.elementFromPoint(ev.clientX, ev.clientY);
+            item.style.pointerEvents = "";
+            const targetItem = el ? el.closest(".sb-slip-item") : null;
+            if (targetItem && targetItem !== item) {
+              const fromIdx = picked.findIndex(p => p.ab === ab);
+              const toIdx = picked.findIndex(p => p.ab === targetItem.dataset.ab);
+              if (fromIdx !== -1 && toIdx !== -1) {
+                const [moving] = picked.splice(fromIdx, 1);
+                picked.splice(toIdx, 0, moving);
+              }
+            }
+          }
+          renderSlip();
+        };
+        item.addEventListener("pointermove", move);
+        item.addEventListener("pointerup", up);
+      };
+    });
+  }
+
+  box.querySelectorAll(".sb-team-info").forEach(el => {
+    el.onclick = () => showBreakdown(sorted.find(t => t.ab === el.dataset.ab));
+  });
+  box.querySelectorAll(".sb-odds-btn").forEach(btn => {
+    btn.onclick = () => {
+      const ab = btn.dataset.ab;
+      const already = picked.find(p => p.ab === ab);
+      if (already) {
+        picked = picked.filter(p => p.ab !== ab);
+        btn.classList.remove("sb-odds-selected");
+      } else {
+        if (picked.length >= picksReq) return;
+        picked.push(sorted.find(t => t.ab === ab));   // new taps fill in from the bottom; drag to promote
+        btn.classList.add("sb-odds-selected");
+      }
+      renderSlip();
+    };
+  });
+
+  document.getElementById("sbSlipSubmit").onclick = async () => {
+    const msg = document.getElementById("msg");
+    if (picked.length !== picksReq) {
+      msg.className = "msg err"; msg.textContent = `Fill all ${picksReq} slots.`;
+      return;
+    }
+    const btn = document.getElementById("sbSlipSubmit");
+    btn.disabled = true; msg.className = "msg"; msg.textContent = "Saving…";
+    const ordered = picked.map(t => t.ab);   // index 0 = rank 1 (top of slip = most confident)
+    const result = await submitRankedPicks(wk, ordered);
+    if (result.ok) {
+      msg.className = "msg ok"; msg.textContent = "Locked in ✓";
+      window._pickEditMode = false;
+      setTimeout(renderWeek, 700);
+    } else {
+      btn.disabled = false; msg.className = "msg err"; msg.textContent = "Save failed: " + result.error;
+    }
+  };
+
+  renderSlip();
+  const [allAssigns3, entries3] = await Promise.all([
+    sbGet(`assignments?order=week_number.asc`).catch(() => []),
+    sbGet(`entries?order=id.asc`).catch(() => []),
+  ]);
+  const liveEntryIds3 = (entries3 || []).filter(e => e.status !== "dead").map(e => e.id);
+  const entriesUsingTeam3 = {};
+  (allAssigns3 || []).forEach(a => { (entriesUsingTeam3[a.team] ||= new Set()).add(a.entry_id); });
+  renderUsageMatrix(wk.week_number, entriesUsingTeam3, liveEntryIds3, entries3);
+}
+
 async function renderWeek() {
   renderWhoami();
   window._pickScreenActive = false;   // set true only when the pick grid renders
@@ -1955,8 +2379,23 @@ async function renderWeek() {
     return;
   }
 
-  // build the ranked slots, pre-filled if I already have picks
   window._pickScreenActive = true;
+
+  // Route to whichever picking style this player has chosen — all three
+  // save through the exact same submitRankedPicks(), so this is purely about
+  // which interface they build their list with.
+  const pickStyle = MY_PREFS?.pickStyle || "classic";
+  if (pickStyle === "dragtiles") {
+    await renderDragPickReal(wk, headerHtml, myPicks, deadTeams, allIn);
+    return;
+  }
+  if (pickStyle === "sportsbook") {
+    await renderSportsbookReal(wk, headerHtml, myPicks, deadTeams, allIn);
+    return;
+  }
+
+  // ---- Classic ----
+  // build the ranked slots, pre-filled if I already have picks
   const existing = {};
   myPicks.forEach(p => { existing[p.rank] = p.team; });
 
@@ -2037,23 +2476,52 @@ async function renderWeek() {
   if (lockBtn) lockBtn.onclick = () => lockWeek(wk);
 }
 
+// Shared by all three picking interfaces (Classic, Drag tiles, Sportsbook) —
+// exactly the same validation, tables, and tiebreaker-timestamp behavior
+// regardless of which UI built the list, so switching styles never changes
+// how a pick actually counts.
+async function submitRankedPicks(wk, orderedTeams) {
+  const picksReq = wk.picks_required;
+  if (orderedTeams.length !== picksReq || orderedTeams.some(t => !t)) {
+    return { ok: false, error: `Fill all ${picksReq} slots.` };
+  }
+  if (new Set(orderedTeams).size !== orderedTeams.length) {
+    return { ok: false, error: "No repeats — each slot needs a different team." };
+  }
+  try {
+    await sb(`picks?week_number=eq.${wk.week_number}&player_id=eq.${ME}`, { method: "DELETE" });
+    const rows = orderedTeams.map((team, i) => ({
+      week_number: wk.week_number, player_id: ME, team, rank: i + 1,
+    }));
+    await sb("picks", { method: "POST", body: JSON.stringify(rows) });
+    // record submission; stamp the submission time on EVERY submit.
+    // Editing/resubmitting resets it — this time is the tiebreaker in standings.
+    const subRow = {
+      week_number: wk.week_number, player_id: ME, submitted: true,
+      first_submitted_at: new Date().toISOString(),
+    };
+    await sbUpsert("submissions", [subRow], "week_number,player_id");
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
 async function submitPicks(wk, picksReq) {
   const msg = document.getElementById("msg");
   msg.className = "msg";
   msg.textContent = "";
 
-  const selects = Array.from(app.querySelectorAll("select.team"));
-  const chosen = selects.map(s => ({ rank: +s.dataset.rank, team: s.value }));
+  const selects = Array.from(app.querySelectorAll("select.team")).sort((a, b) => +a.dataset.rank - +b.dataset.rank);
+  const chosen = selects.map(s => s.value);
 
-  // validate
-  const empties = chosen.filter(c => !c.team);
-  if (empties.length) {
+  const emptyCount = chosen.filter(t => !t).length;
+  if (emptyCount) {
     msg.className = "msg err";
-    msg.textContent = `Fill all ${picksReq} slots — ${empties.length} still empty.`;
+    msg.textContent = `Fill all ${picksReq} slots — ${emptyCount} still empty.`;
     return;
   }
-  const teams = chosen.map(c => c.team);
-  if (new Set(teams).size !== teams.length) {
+  if (new Set(chosen).size !== chosen.length) {
     msg.className = "msg err";
     msg.textContent = "No repeats — each slot needs a different team.";
     return;
@@ -2064,30 +2532,16 @@ async function submitPicks(wk, picksReq) {
   msg.className = "msg";
   msg.textContent = "Saving…";
 
-  try {
-    // clear my existing picks for this week, then insert fresh
-    await sb(`picks?week_number=eq.${wk.week_number}&player_id=eq.${ME}`, { method: "DELETE" });
-    const rows = chosen.map(c => ({
-      week_number: wk.week_number, player_id: ME, team: c.team, rank: c.rank,
-    }));
-    await sb("picks", { method: "POST", body: JSON.stringify(rows) });
-
-    // record submission; stamp the submission time on EVERY submit.
-    // Editing/resubmitting resets it — this time is the tiebreaker in standings.
-    const subRow = {
-      week_number: wk.week_number, player_id: ME, submitted: true,
-      first_submitted_at: new Date().toISOString(),
-    };
-    await sbUpsert("submissions", [subRow], "week_number,player_id");
-
+  const result = await submitRankedPicks(wk, chosen);
+  if (result.ok) {
     msg.className = "msg ok";
     msg.textContent = "Locked in ✓";
     window._pickEditMode = false;   // collapse to the clean locked-in view
     setTimeout(renderWeek, 700);
-  } catch (e) {
+  } else {
     btn.disabled = false;
     msg.className = "msg err";
-    msg.textContent = "Save failed: " + e.message;
+    msg.textContent = "Save failed: " + result.error;
   }
 }
 
@@ -4101,7 +4555,7 @@ async function renderStandings() {
 //  THEME EDITOR — per-player, saved to Supabase players.prefs
 // ============================================================
 function openThemeEditor() {
-  const cur = MY_PREFS || { theme: "stadium", accent: "", bg: "", font: "inter" };
+  const cur = MY_PREFS || { theme: "stadium", accent: "", bg: "", font: "inter", pickStyle: "classic" };
   const overlay = document.createElement("div");
   overlay.className = "modal-overlay";
 
@@ -4150,6 +4604,23 @@ function openThemeEditor() {
         <select id="fontpick" class="wksel" style="width:100%">${fontOpts}</select>
       </div>
 
+      <div class="modal-section">
+        <h3>Pick style</h3>
+        <p style="margin-bottom:10px">How you build your ranked list each week. Purely visual/interaction — every
+          style saves picks identically, so switching never changes how anything counts.</p>
+        <div class="theme-swatches" id="pickstylesel">
+          <button class="theme-swatch ${(cur.pickStyle || "classic") === "classic" ? "sel" : ""}" data-pickstyle="classic" style="background:var(--panel-2);border-color:var(--line)">
+            <span class="sw-name" style="color:var(--ink)">Classic</span>
+          </button>
+          <button class="theme-swatch ${cur.pickStyle === "dragtiles" ? "sel" : ""}" data-pickstyle="dragtiles" style="background:var(--panel-2);border-color:var(--line)">
+            <span class="sw-name" style="color:var(--ink)">Drag tiles</span>
+          </button>
+          <button class="theme-swatch ${cur.pickStyle === "sportsbook" ? "sel" : ""}" data-pickstyle="sportsbook" style="background:var(--panel-2);border-color:var(--line)">
+            <span class="sw-name" style="color:var(--ink)">Sportsbook</span>
+          </button>
+        </div>
+      </div>
+
       <div class="modal-actions" style="margin-top:20px">
         <button class="btn btn-ghost" id="themecancel">Cancel</button>
         <button class="btn btn-primary" id="themesave">Save theme</button>
@@ -4161,6 +4632,13 @@ function openThemeEditor() {
   // working copy; live-preview as they change things
   let draft = { ...cur };
   const preview = () => applyTheme(draft);
+
+  overlay.querySelectorAll("#pickstylesel .theme-swatch").forEach(b => {
+    b.onclick = () => {
+      draft.pickStyle = b.dataset.pickstyle;
+      overlay.querySelectorAll("#pickstylesel .theme-swatch").forEach(x => x.classList.toggle("sel", x === b));
+    };
+  });
 
   overlay.querySelectorAll(".theme-swatch").forEach(b => {
     b.onclick = () => {
