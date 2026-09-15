@@ -2722,8 +2722,17 @@ async function renderField() {
     return;
   }
 
-  // build intel for the selected week (default = current)
-  renderFieldIntel(field, curWeek);
+  // Default to the latest week that actually HAS imported picks, not blindly
+  // the app's current week — if you're on Week 2 here but only ever imported
+  // Week 1's field data, defaulting to "Week 2" would show a false-empty
+  // screen even though the Week 1 import is sitting there fine.
+  const maxImportedWeek = Math.max(1, ...field.map(f => {
+    try { return JSON.parse(f.picks).length; } catch { return 1; }
+  }));
+  const defaultWeek = Math.min(curWeek, maxImportedWeek);
+
+  // build intel for the selected week (default = latest week with real data)
+  renderFieldIntel(field, defaultWeek);
 }
 
 function fieldImportHtml(prefill, note) {
