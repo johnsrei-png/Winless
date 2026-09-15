@@ -351,6 +351,7 @@
     font-size: 12px; padding: 12px; resize: vertical; line-height: 1.5;
   }
   textarea.paste:focus { outline: none; border-color: var(--alert); }
+  textarea.paste.paste-dragover { outline: none; border-color: var(--gold); background: rgba(245,196,81,0.06); }
   .import-actions { display: flex; gap: 12px; align-items: center; margin-top: 12px; }
 
   /* ---- Field: intel ---- */
@@ -2735,7 +2736,7 @@ function fieldImportHtml(prefill, note) {
           Choose CSV file
           <input type="file" accept=".csv,text/csv" id="csvfile" style="display:none">
         </label>
-        <span style="font-size:12px;color:var(--ink-faint)">or paste below</span>
+        <span style="font-size:12px;color:var(--ink-faint)">or drag a CSV onto the box below, or paste directly</span>
       </div>
       <textarea class="paste" id="paste" placeholder="NAME\tWEEK 1\tWEEK 2\tWEEK 3
 FOXY 1\tCowboys\tBears\tBrowns
@@ -2750,17 +2751,35 @@ DELWAKA 1\tBrowns\tPanthers\tJets">${prefill || ""}</textarea>
 function wireFieldImport(curWeek) {
   const btn = document.getElementById("doimport");
   if (btn) btn.onclick = () => doFieldImport(curWeek);
-  const fileInput = document.getElementById("csvfile");
-  if (fileInput) fileInput.onchange = (e) => {
-    const file = e.target.files[0];
+
+  const ta = document.getElementById("paste");
+  const loadFile = (file) => {
     if (!file) return;
     const reader = new FileReader();
     reader.onload = () => {
-      const ta = document.getElementById("paste");
-      if (ta) ta.value = reader.result;
+      if (!ta) return;
+      ta.value = reader.result;
+      // Focus the textarea so the background auto-refresh recognizes an
+      // active edit in progress and doesn't wipe this out a moment later —
+      // after the native file-picker dialog closes, focus doesn't land back
+      // on the textarea on its own, which is exactly what was clobbering it.
+      ta.focus();
     };
     reader.readAsText(file);
   };
+
+  const fileInput = document.getElementById("csvfile");
+  if (fileInput) fileInput.onchange = (e) => loadFile(e.target.files[0]);
+
+  if (ta) {
+    ta.addEventListener("dragover", (e) => { e.preventDefault(); ta.classList.add("paste-dragover"); });
+    ta.addEventListener("dragleave", () => ta.classList.remove("paste-dragover"));
+    ta.addEventListener("drop", (e) => {
+      e.preventDefault();
+      ta.classList.remove("paste-dragover");
+      loadFile(e.dataTransfer.files[0]);
+    });
+  }
 }
 
 async function doFieldImport(curWeek) {
