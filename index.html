@@ -1362,14 +1362,15 @@ const ENTRY_ACCENT_COLORS = ["#4EA1F5", "#A78BFA", "#2DD4BF", "#F472B6", "#FB923
 // cards) that already use border-left color to mean something else (this
 // week's actual result), so a decorative per-entry color would clobber it.
 function entryPhotoBg(entryId, eliminated) {
-  const img = eliminated ? `entry${entryId}-eliminated.jpg` : `entry${entryId}.jpg`;
+  const pid = PHOTO_OF[entryId] || entryId;
+  const img = eliminated ? `entry${pid}-eliminated.jpg` : `entry${pid}.jpg`;
   return `background-image: linear-gradient(160deg, rgba(19,24,32,0.86), rgba(19,24,32,0.72)), url('${img}'); ` +
     `background-size: cover, contain; background-repeat: no-repeat; background-position: center;`;
 }
 // Photo + scrim + the per-entry accent border — for contexts (like the Edit
 // Board) that don't already use border-left for something else.
 function entryCardBgStyle(entryId, eliminated) {
-  const color = ENTRY_ACCENT_COLORS[(entryId - 1) % 6];
+  const color = ENTRY_ACCENT_COLORS[((PHOTO_OF[entryId] || entryId) - 1) % 6];
   return entryPhotoBg(entryId, eliminated) + ` border-left: 3px solid ${color};`;
 }
 
@@ -1380,7 +1381,8 @@ function entryCardBgStyle(entryId, eliminated) {
 // just leaves the tile looking plain, same graceful-fallback philosophy as
 // everywhere else.
 function olEntryPhotoBg(entryId, eliminated) {
-  const img = eliminated ? `ol-entry${entryId}-eliminated.jpg` : `ol-entry${entryId}.jpg`;
+  const opid = OL_PHOTO_OF[entryId] || entryId;
+  const img = eliminated ? `ol-entry${opid}-eliminated.jpg` : `ol-entry${opid}.jpg`;
   return `background-image: linear-gradient(160deg, rgba(19,24,32,0.86), rgba(19,24,32,0.72)), url('${img}'); ` +
     `background-size: cover, contain; background-repeat: no-repeat; background-position: center;`;
 }
@@ -1427,7 +1429,35 @@ async function sb(path, opts = {}) {
   const txt = await res.text();
   return txt ? JSON.parse(txt) : null;
 }
-const sbGet = (path) => sb(path, { method: "GET" });
+// ===== Buy-back pools =====
+// Entries carry a pool_num (0 = the main pool, 1+ = Loser Loser Pool buy-ins).
+// Everything in the app works off the ACTIVE pool (highest pool_num present);
+// older pools' rows stay in the database as history. Reads of the entry tables
+// are filtered here, so every screen automatically sees only the live pool.
+let ACTIVE_POOL = 0;
+let POOL_START = {};
+const PHOTO_OF = {}, OL_PHOTO_OF = {};
+function poolFilterEntries(rows, kind) {
+  if (!Array.isArray(rows)) return rows;
+  const map = kind === "ol" ? OL_PHOTO_OF : PHOTO_OF;
+  const maxPool = rows.reduce((m, r) => Math.max(m, r.pool_num || 0), 0);
+  if (kind !== "ol") {
+    ACTIVE_POOL = maxPool;
+    POOL_START = {};
+    rows.forEach(r => { const pn = r.pool_num || 0; POOL_START[pn] = Math.min(POOL_START[pn] || 99, r.start_week || 1); });
+  }
+  rows.forEach(r => { if (r.photo_id) map[r.id] = r.photo_id; });
+  const act = rows.filter(r => (r.pool_num || 0) === maxPool).sort((a, b) => a.id - b.id);
+  act.forEach((r, i) => { r.num = i + 1; });
+  return act;
+}
+const sbGet = async (path) => {
+  const r = await sb(path, { method: "GET" });
+  if (path === "entries?order=id.asc") return poolFilterEntries(r, "human");
+  if (path === "ol_entries?order=id.asc") return poolFilterEntries(r, "ol");
+  return r;
+};
+const poolName = (n) => n > 0 ? "Loser Loser Pool" + (n > 1 ? " #" + n : "") : "Main Pool";
 const sbUpsert = (table, rows, onConflict) =>
   sb(`${table}${onConflict ? `?on_conflict=${onConflict}` : ""}`, {
     method: "POST",
@@ -2315,7 +2345,7 @@ async function renderWeek() {
 
   const headerHtml = `
     <div class="weekbar">
-      <div class="wk">Week ${wk.week_number}</div>
+      <div class="wk">Week ${wk.week_number}${ACTIVE_POOL > 0 ? `<div style="font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:var(--alert);margin-top:2px">${poolName(ACTIVE_POOL)}</div>` : ""}</div>
       <div class="stats">
         <div class="stat"><div class="num">${wk.entries_remaining}</div><div class="lbl">Entries</div></div>
         <div class="stat"><div class="num">${picksReq}</div><div class="lbl">Picks Each</div></div>
@@ -2768,7 +2798,7 @@ async function renderBoard(wk, headerHtml) {
           const team = teamByEntry[e.id];
           const dead = e.status === "dead";
           return `<div class="ol-entry-row ${dead ? "dead" : ""}" style="${olEntryPhotoBg(e.id, dead)}">
-            <span class="ol-entry-id">Entry ${e.id}</span>
+            <span class="ol-entry-id">Entry ${e.num || e.id}</span>
             <span class="ol-entry-team">${dead ? `Out Wk ${e.died_week ?? "?"}` : (team ? (TEAM_NAME[team] || team) : "—")}</span>
           </div>`;
         }).join("");
@@ -2814,8 +2844,8 @@ async function renderBoard(wk, headerHtml) {
       return `
         <div class="placed-card ${cls}" style="${entryPhotoBg(e.id, dead)}">
           <div class="pid">
-            <span class="pid-name" data-entry="${e.id}" title="Click to rename">${e.label || "Entry " + e.id}</span>
-            <span class="pid-sub">Entry ${e.id}</span>
+            <span class="pid-name" data-entry="${e.id}" title="Click to rename">${e.label || "Entry " + (e.num || e.id)}</span>
+            <span class="pid-sub">Entry ${e.num || e.id}</span>
           </div>
           <div class="pteam ${team ? "" : "none"}">${team ? (TEAM_NAME[team] || team) : "not placed"}</div>
           ${dead
@@ -2869,7 +2899,7 @@ async function renderBoard(wk, headerHtml) {
     boardHtml += `
       <div class="entry-card ${dead ? "dead" : ""}" style="${entryCardBgStyle(e.id, dead)}">
         <div class="entry-head">
-          <div class="id">${e.label || "Entry " + e.id}</div>
+          <div class="id">${e.label || "Entry " + (e.num || e.id)}</div>
           <div class="status-tag ${dead ? "dead" : "alive"}">${dead ? "Eliminated" : "Alive"}</div>
         </div>
         ${dead ? `<div class="entry-used">Knocked out in Week ${e.died_week ?? "?"}.</div>` : `
@@ -3154,6 +3184,7 @@ function ownerOf(entryName) {
   return entryName.replace(/\s+\d+$/,"").trim();
 }
 
+let FIELD_POOL = null;
 async function renderField() {
   renderWhoami();
 
@@ -3162,8 +3193,11 @@ async function renderField() {
 
   // load stored field picks (one row per entry, picks as JSON)
   let field = [];
+  let fieldAllPools = [];
   try {
-    field = await sbGet("field_picks?order=entry_name.asc") || [];
+    fieldAllPools = await sbGet("field_picks?order=entry_name.asc") || [];
+    if (FIELD_POOL == null) FIELD_POOL = ACTIVE_POOL;
+    field = fieldAllPools.filter(f => (f.pool || 0) === FIELD_POOL);
   } catch (e) {
     app.innerHTML = fieldImportHtml("", `Couldn't load field data: ${e.message}.
       Make sure you ran the field_picks table SQL in Supabase.`);
@@ -3181,6 +3215,7 @@ async function renderField() {
   // the app's current week — if you're on Week 2 here but only ever imported
   // Week 1's field data, defaulting to "Week 2" would show a false-empty
   // screen even though the Week 1 import is sitting there fine.
+  window._fieldHasPoolSwitch = ACTIVE_POOL > 0;
   const maxImportedWeek = Math.max(1, ...field.map(f => {
     try { return JSON.parse(f.picks).length; } catch { return 1; }
   }));
@@ -3191,9 +3226,25 @@ async function renderField() {
 }
 
 function fieldImportHtml(prefill, note) {
+  const fp = FIELD_POOL == null ? ACTIVE_POOL : FIELD_POOL;
+  const poolOpts = [];
+  for (let n = 0; n <= ACTIVE_POOL; n++) poolOpts.push(`<option value="${n}" ${n === fp ? "selected" : ""}>${poolName(n)}</option>`);
+  const switcher = ACTIVE_POOL > 0 ? `
+    <div style="margin-bottom:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <label style="font-size:11px;color:var(--ink-faint);letter-spacing:0.08em;text-transform:uppercase">Field for</label>
+      <select id="fieldpool" class="pw-input" style="max-width:240px">${poolOpts.join("")}</select>
+    </div>` : "";
+  const startW = (POOL_START[fp] || 1);
+  const startRow = fp > 0 ? `
+    <div style="margin-bottom:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <label style="font-size:12px;color:var(--ink-dim)">This CSV's first week column is NFL week</label>
+      <input type="number" id="csvstartweek" value="${startW}" min="1" max="22" style="width:70px" />
+    </div>` : "";
   return `
+    ${switcher}
     <div class="import-box">
-      <h3>Import field picks</h3>
+      <h3>Import field picks${fp > 0 ? " — " + poolName(fp) : ""}</h3>
+      ${startRow}
       <p>${note || "Upload the SimplySportsWare CSV export directly, or paste its contents below — it's read exactly as exported (Member, Alive, one column per week, Name, Week Eliminated). A plain NAME + one-team-per-week grid still works too, if you're pasting from somewhere else."}</p>
       <div class="import-actions" style="margin-bottom:10px">
         <label class="btn btn-ghost" style="cursor:pointer">
@@ -3213,6 +3264,8 @@ DELWAKA 1\tBrowns\tPanthers\tJets">${prefill || ""}</textarea>
 }
 
 function wireFieldImport(curWeek) {
+  const fpSel = document.getElementById("fieldpool");
+  if (fpSel) fpSel.onchange = () => { FIELD_POOL = +fpSel.value; renderField(); };
   const btn = document.getElementById("doimport");
   if (btn) btn.onclick = () => doFieldImport(curWeek);
 
@@ -3265,16 +3318,21 @@ async function doFieldImport(curWeek) {
   msg.className = "msg"; msg.textContent = "Importing…";
 
   // upsert one row per entry: { entry_name, owner, picks(json), out_week }
+  const impPool = FIELD_POOL == null ? ACTIVE_POOL : FIELD_POOL;
+  const sw = impPool > 0 ? Math.max(1, parseInt(document.getElementById("csvstartweek")?.value, 10) || 1) : 1;
+  const off = sw - 1;   // pad so picks[] stays indexed by absolute NFL week
   const rows = parsed.rows.map(r => ({
     entry_name: r.name,
     owner: r.owner || ownerOf(r.name),
-    picks: JSON.stringify(r.picks),
-    out_week: r.outWeek ?? null,
+    picks: JSON.stringify(Array(off).fill("").concat(r.picks)),
+    out_week: r.outWeek == null ? null : r.outWeek + off,
+    pool: impPool,
   }));
 
   try {
     // replace the whole field snapshot
-    await sb("field_picks?entry_name=neq.__none__", { method: "DELETE" });
+    // replace only THIS pool's field snapshot
+    await sb(impPool === 0 ? "field_picks?or=(pool.eq.0,pool.is.null)" : `field_picks?pool=eq.${impPool}`, { method: "DELETE" });
     await sb("field_picks", { method: "POST", body: JSON.stringify(rows) });
     let note = usingCSV
       ? `Imported ${parsed.rows.length} entries from the CSV export, ${parsed.weeks} week${parsed.weeks!==1?"s":""} of picks.`
@@ -3730,7 +3788,7 @@ async function onlyLossesTrashTalk() {
 // entirely separate from the humans' entries table.
 async function ensureOLEntries() {
   let ent = await sbGet(`ol_entries?order=id.asc`).catch(() => []);
-  if (!ent || ent.length < 6) {
+  if (!ent || ent.length === 0) {
     const seed = [1, 2, 3, 4, 5, 6].map(id => ({ id, status: "alive" }));
     await sbUpsert("ol_entries", seed, "id").catch(() => {});
     ent = await sbGet(`ol_entries?order=id.asc`).catch(() => []);
@@ -4641,10 +4699,10 @@ function openThemeEditor() {
     };
   });
 
-  overlay.querySelectorAll(".theme-swatch").forEach(b => {
+  overlay.querySelectorAll(".theme-swatch[data-theme]").forEach(b => {
     b.onclick = () => {
       draft.theme = b.dataset.theme;
-      overlay.querySelectorAll(".theme-swatch").forEach(x => x.classList.toggle("sel", x === b));
+      overlay.querySelectorAll(".theme-swatch[data-theme]").forEach(x => x.classList.toggle("sel", x === b));
       // reset custom pickers to the new preset's values for clarity
       overlay.querySelector("#accentpick").value = THEMES[draft.theme].vars["--alert"];
       overlay.querySelector("#bgpick").value = THEMES[draft.theme].vars["--bg"];
@@ -4745,11 +4803,12 @@ async function commishTools(overlay) {
   modal.innerHTML = `<h2>Commissioner</h2><p>Loading season state…</p>`;
 
   // figure out sensible defaults for the next week
-  let weeks = [], entries = [];
+  let weeks = [], entries = [], olEntriesC = [];
   try {
-    [weeks, entries] = await Promise.all([
+    [weeks, entries, olEntriesC] = await Promise.all([
       sbGet("weeks?order=week_number.desc"),
       sbGet("entries?order=id.asc"),
+      sbGet("ol_entries?order=id.asc").catch(() => []),
     ]);
   } catch (e) {
     modal.innerHTML = `<h2>Commissioner</h2><p class="msg err">Couldn't load state: ${e.message}</p>
@@ -4782,7 +4841,7 @@ async function commishTools(overlay) {
         </div>
         <div style="flex:1">
           <label style="font-size:11px;color:var(--ink-faint);letter-spacing:0.08em;text-transform:uppercase">Entries left</label>
-          <input type="number" id="wkentries" value="${aliveCount}" min="1" max="6" />
+          <input type="number" id="wkentries" value="${aliveCount}" min="1" />
         </div>
         <div style="flex:1">
           <label style="font-size:11px;color:var(--ink-faint);letter-spacing:0.08em;text-transform:uppercase">Picks each</label>
@@ -4796,6 +4855,23 @@ async function commishTools(overlay) {
     </div>
 
     <div class="modal-section">
+      <h3>🔁 Loser Loser Pool buy-back</h3>
+      <p>Currently running: <b>${poolName(ACTIVE_POOL)}</b>${ACTIVE_POOL > 0 ? ` (started Week ${POOL_START[ACTIVE_POOL] || "?"})` : ""}.
+        A buy-back starts a fresh pool with clean-slate entries (every team available again) and gives Only Losses
+        the same number of entries. Your old pool's history and results are kept. If the latest week is still open,
+        it restarts with the new entry count and its picks are cleared so everyone re-picks.</p>
+      <div style="display:flex;gap:10px;align-items:flex-end">
+        <div style="flex:1">
+          <label style="font-size:11px;color:var(--ink-faint);letter-spacing:0.08em;text-transform:uppercase">Entries buying back</label>
+          <input type="number" id="bbcount" value="${Math.max(1, ((entries || []).length) || 6)}" min="1" max="12" />
+        </div>
+        <button class="btn btn-primary" id="bbgo">Start buy-back</button>
+        ${ACTIVE_POOL > 0 ? `<button class="btn btn-danger" id="bbundo">Undo ${poolName(ACTIVE_POOL)}</button>` : ""}
+      </div>
+      <span class="msg" id="bbmsg"></span>
+    </div>
+
+    <div class="modal-section">
       <h3>Manually mark an entry dead or alive</h3>
       <p>Overrides the automatic result check — use this if a game's finished but the entry's tile hasn't
         updated yet. Changes are shared: everyone sees the same status once you toggle it, same as if it
@@ -4803,10 +4879,10 @@ async function commishTools(overlay) {
       <div class="pw-reset-row">
         <select id="manualEntrySel" class="pw-input">
           <optgroup label="Your Entries">
-            ${[1,2,3,4,5,6].map(n => `<option value="human-${n}">Entry ${n}</option>`).join("")}
+            ${(entries || []).map(e => `<option value="human-${e.id}">Entry ${e.num}</option>`).join("")}
           </optgroup>
           <optgroup label="Only Losses' Entries">
-            ${[1,2,3,4,5,6].map(n => `<option value="ol-${n}">OL Entry ${n}</option>`).join("")}
+            ${(olEntriesC || []).map(e => `<option value="ol-${e.id}">OL Entry ${e.num}</option>`).join("")}
           </optgroup>
         </select>
         <button class="btn btn-ghost" id="manualToggleBtn">Toggle dead/alive</button>
@@ -4855,6 +4931,64 @@ async function commishTools(overlay) {
       <span class="msg" id="resetmsg"></span>
     </div>`;
 
+  // ===== Loser Loser Pool buy-back =====
+  const bbReload = () => setTimeout(() => { overlay.remove(); CURRENT_TAB = "week"; BOARD_EDIT_MODE = false; boot(); }, 900);
+  modal.querySelector("#bbgo").onclick = async () => {
+    const msg = modal.querySelector("#bbmsg");
+    const n = parseInt(modal.querySelector("#bbcount").value, 10);
+    if (!n || n < 1 || n > 12) { msg.className = "msg err"; msg.textContent = "Pick 1–12 entries."; return; }
+    const latestW = weeks && weeks.length ? weeks[0] : null;
+    const weekOpen = latestW && latestW.status === "open";
+    const startWeek = latestW ? (weekOpen ? latestW.week_number : latestW.week_number + 1) : 1;
+    if (!confirm(`Start a new Loser Loser Pool with ${n} entries (and ${n} for Only Losses), beginning Week ${startWeek}?` +
+      (weekOpen ? `\n\nWeek ${startWeek}'s current picks will be cleared so everyone re-picks with ${n + 2} picks.` : ""))) return;
+    const btn = modal.querySelector("#bbgo"); btn.disabled = true;
+    msg.className = "msg"; msg.textContent = "Creating entries…";
+    try {
+      const allE = (await sb("entries?order=id.asc")) || [];
+      const allO = (await sb("ol_entries?order=id.asc")) || [];
+      const newPool = Math.max(0, ...allE.map(e => e.pool_num || 0), ...allO.map(e => e.pool_num || 0)) + 1;
+      const nextE = Math.max(0, ...allE.map(e => e.id)) + 1;
+      const nextO = Math.max(0, ...allO.map(e => e.id)) + 1;
+      const mk = (base) => Array.from({ length: n }, (_, i) => ({
+        id: base + i, status: "alive", died_week: null,
+        pool_num: newPool, photo_id: (i % 6) + 1, start_week: startWeek,
+      }));
+      await sb("entries", { method: "POST", body: JSON.stringify(mk(nextE)) });
+      await sb("ol_entries", { method: "POST", body: JSON.stringify(mk(nextO)) });
+      if (weekOpen) {
+        const w = startWeek;
+        await sb(`weeks?week_number=eq.${w}`, { method: "PATCH", body: JSON.stringify({ entries_remaining: n, picks_required: n + 2 }) });
+        for (const t of ["picks", "submissions", "assignments", "only_losses_picks", "ol_assignments"]) {
+          await sb(`${t}?week_number=eq.${w}`, { method: "DELETE" }).catch(() => {});
+        }
+      }
+      msg.className = "msg ok";
+      msg.textContent = `${poolName(newPool)} started with ${n} entries${weekOpen ? ` — Week ${startWeek} reopened with ${n + 2} picks` : `. Open Week ${startWeek} with ${n} entries when ready`}. Reloading…`;
+      bbReload();
+    } catch (e) {
+      btn.disabled = false;
+      msg.className = "msg err";
+      msg.textContent = "Couldn't start buy-back: " + e.message + " (did you run the buy-back SQL in Supabase?)";
+    }
+  };
+  const bbUndo = modal.querySelector("#bbundo");
+  if (bbUndo) bbUndo.onclick = async () => {
+    const msg = modal.querySelector("#bbmsg");
+    if (!confirm(`Delete ${poolName(ACTIVE_POOL)} entirely (its entries, picks assignments and field data)? The previous pool comes back as the active one.`)) return;
+    try {
+      const pool = ACTIVE_POOL;
+      for (const [tbl, atbl] of [["entries", "assignments"], ["ol_entries", "ol_assignments"]]) {
+        const rows = ((await sb(`${tbl}?pool_num=eq.${pool}`)) || []);
+        for (const r of rows) await sb(`${atbl}?entry_id=eq.${r.id}`, { method: "DELETE" }).catch(() => {});
+        await sb(`${tbl}?pool_num=eq.${pool}`, { method: "DELETE" });
+      }
+      await sb(`field_picks?pool=eq.${pool}`, { method: "DELETE" }).catch(() => {});
+      msg.className = "msg ok"; msg.textContent = "Buy-back removed. Reloading…";
+      bbReload();
+    } catch (e) { msg.className = "msg err"; msg.textContent = "Couldn't undo: " + e.message; }
+  };
+
   // manual entry-status override — a shared fallback for when automatic
   // resolution hasn't caught up yet, for either entry set
   modal.querySelector("#manualToggleBtn").onclick = async () => {
@@ -4862,7 +4996,7 @@ async function commishTools(overlay) {
     const [kind, idStr] = modal.querySelector("#manualEntrySel").value.split("-");
     const id = +idStr;
     const table = kind === "ol" ? "ol_entries" : "entries";
-    const label = kind === "ol" ? `OL Entry ${id}` : `Entry ${id}`;
+    const label = modal.querySelector("#manualEntrySel").selectedOptions[0]?.textContent || `Entry ${id}`;
     msg.className = "msg"; msg.textContent = "Checking…";
     try {
       const rows = await sbGet(`${table}?id=eq.${id}`);
@@ -5025,6 +5159,8 @@ async function commishTools(overlay) {
       await sb(`only_losses_picks?id=gte.0`, { method: "DELETE" }).catch(() => {});
       await sb(`only_losses_results?id=gte.0`, { method: "DELETE" }).catch(() => {});
       await sb(`ol_assignments?id=gte.0`, { method: "DELETE" }).catch(() => {});
+      await sb(`ol_entries?pool_num=gt.0`, { method: "DELETE" }).catch(() => {});
+      await sb(`entries?pool_num=gt.0`, { method: "DELETE" }).catch(() => {});
       await sb(`ol_entries?id=gte.0`, {
         method: "PATCH", body: JSON.stringify({ status: "alive", died_week: null }),
       }).catch(() => {});
@@ -5399,7 +5535,7 @@ async function renderUsageMatrix(startWeek, entriesUsingTeam, liveEntryIds, entr
   const loading = box.querySelector(".um-loading");
   const totalLive = liveEntryIds.length;
   const liveSet = new Set(liveEntryIds);
-  const labelOf = (id) => (entries || []).find(e => e.id === id)?.label || `Entry ${id}`;
+  const labelOf = (id) => (entries || []).find(e => e.id === id)?.label || `Entry ${(entries || []).find(e => e.id === id)?.num || id}`;
   const WEEKS_AHEAD = 6;
   const weeks = [];
   for (let w = startWeek; w < startWeek + WEEKS_AHEAD && w <= 18; w++) weeks.push(w);
@@ -5990,8 +6126,9 @@ async function computeBestLoserScores(week) {
 // point) field on each team. Shared by the Field tab and the pick screen so
 // they always agree with each other, computed from whatever's been imported.
 async function computeFieldPctForWeek(week) {
-  const field = await sbGet("field_picks?order=entry_name.asc").catch(() => []);
-  if (!field || !field.length) return null;
+  const fieldAll = await sbGet("field_picks?order=entry_name.asc").catch(() => []);
+  const field = (fieldAll || []).filter(f => (f.pool || 0) === ACTIVE_POOL);
+  if (!field.length) return null;
   const entries = field.map(f => ({
     outWeek: f.out_week ?? null,
     picks: (() => { try { return JSON.parse(f.picks); } catch { return []; } })(),
